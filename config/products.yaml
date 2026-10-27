@@ -1,0 +1,474 @@
+# Search, ranking and scheduling configuration.
+#
+# This file is configuration, not code: edit it and restart the container.
+# The effective polling interval is recalculated from the daily API budget
+# at startup, so the values below are targets rather than guarantees.
+
+marketplaces:
+  - EBAY_IT
+  - EBAY_DE
+  - EBAY_AT
+
+delivery:
+  country: IT
+  postal_code: null
+
+budget:
+  # eBay documents a default of 5,000 Browse calls/day. Stay below your real
+  # allowance; the ledger refuses calls once this budget is spent.
+  daily_calls: 4000
+  # Kept for item-detail lookups and manual commands.
+  reserve_calls: 800
+
+scan:
+  new_listings_minutes: 30
+  auctions_minutes: 60
+  variant_searches_hours: 6
+  bundle_searches_hours: 6
+  discovery_hours: 24
+  broad_discovery_enabled: true
+  # Pagination is deliberately shallow: 50 items/page does not mean the whole
+  # result set was examined.
+  max_pages: 2
+  item_detail_daily_cap: 120
+  stale_after_hours: 72
+  unknown_after_hours: 336
+  taxonomy_cache_days: 30
+
+alerts:
+  max_per_day: 40
+  material_price_drop_pct: 5
+  unknown_shipping_estimate_eur: 15
+  # medium or high. Provisional estimates (active listings / unverified
+  # references) are never eligible for normal alerts.
+  min_confidence: medium
+  allow_provisional: false
+  auction_alert_hours: 48
+
+ranking:
+  full_discount_score_pct: 50
+  full_savings_score_eur: 100
+  auction_safety_margin_pct: 20
+  bundle_haircut_pct: 30
+  bundle_min_discount_pct: 35
+  bundle_min_savings_eur: 60
+  untested_value_haircut_pct: 35
+  low_seller_feedback_pct: 95
+
+retention:
+  observation_days: 180
+  alert_days: 365
+  api_call_days: 60
+  backup_days: 14
+
+categories:
+  gpu:
+    label: GPUs
+    taxonomy_hint: "Graphics Cards"
+    min_discount_pct: 25
+    min_savings_eur: 75
+    full_savings_score_eur: 300
+    default_shipping_eur: 15
+  cpu:
+    label: CPUs
+    taxonomy_hint: "CPUs/Processors"
+    min_discount_pct: 25
+    min_savings_eur: 30
+    full_savings_score_eur: 120
+    default_shipping_eur: 8
+  ram:
+    label: Memory
+    taxonomy_hint: "Memory"
+    min_discount_pct: 30
+    min_savings_eur: 20
+    full_savings_score_eur: 80
+    default_shipping_eur: 6
+  storage:
+    label: Storage
+    taxonomy_hint: "Hard Drives (HDD, SSD & NAS)"
+    min_discount_pct: 30
+    min_savings_eur: 15
+    full_savings_score_eur: 60
+    default_shipping_eur: 6
+  motherboard:
+    label: Motherboards
+    taxonomy_hint: "Motherboards"
+    min_discount_pct: 30
+    min_savings_eur: 25
+    full_savings_score_eur: 90
+    default_shipping_eur: 10
+  bundle:
+    label: Bundles and mixed lots
+    taxonomy_hint: "Computers/Tablets & Networking"
+    min_discount_pct: 35
+    min_savings_eur: 60
+    full_savings_score_eur: 250
+    default_shipping_eur: 20
+
+# Extra model suffixes that change the product identity. "RTX 3090 Ti" must
+# never inherit the RTX 3090 reference price.
+variant_suffixes:
+  - ti
+  - super
+  - xt
+  - xtx
+  - x3d
+  - kf
+  - ks
+  - "3d"
+
+products:
+  - id: rtx_4090
+    name: NVIDIA GeForce RTX 4090
+    category: gpu
+    priority: high
+    condition_class: used_working
+    aliases:
+      - "rtx 4090"
+      - "geforce rtx 4090"
+      - "nvidia rtx 4090"
+    spec:
+      vram_gb: 24
+    queries:
+      - "RTX 4090"
+      - "GeForce RTX 4090"
+    variant_queries:
+      - "RTX4090"
+      - "NVIDIA RTX 4090 24GB"
+      - "scheda video RTX 4090"
+    auction_queries:
+      - "RTX 4090"
+
+  - id: rtx_4080
+    name: NVIDIA GeForce RTX 4080
+    category: gpu
+    priority: normal
+    condition_class: used_working
+    aliases:
+      - "rtx 4080"
+      - "geforce rtx 4080"
+      - "nvidia rtx 4080"
+    forbidden_tokens:
+      - "4080 super"
+      - "rtx 4080 super"
+    spec:
+      vram_gb: 16
+    queries:
+      - "RTX 4080"
+    variant_queries:
+      - "RTX4080 16GB"
+    auction_queries:
+      - "RTX 4080"
+
+  - id: rtx_3090
+    name: NVIDIA GeForce RTX 3090
+    category: gpu
+    priority: high
+    condition_class: used_working
+    aliases:
+      - "rtx 3090"
+      - "geforce rtx 3090"
+      - "nvidia rtx 3090"
+      - "nvidia geforce rtx 3090"
+    forbidden_tokens:
+      - "3090 ti"
+    spec:
+      vram_gb: 24
+    queries:
+      - "RTX 3090"
+      - "GeForce RTX 3090"
+    variant_queries:
+      - "RTX3090"
+      - "NVIDIA RTX 3090 24GB"
+      - "scheda video RTX 3090"
+      - "Grafikkarte RTX 3090"
+    auction_queries:
+      - "RTX 3090"
+
+  - id: rtx_3090_ti
+    name: NVIDIA GeForce RTX 3090 Ti
+    category: gpu
+    priority: normal
+    condition_class: used_working
+    aliases:
+      - "rtx 3090 ti"
+      - "geforce rtx 3090 ti"
+      - "nvidia rtx 3090 ti"
+    spec:
+      vram_gb: 24
+    queries:
+      - "RTX 3090 Ti"
+    variant_queries:
+      - "RTX3090Ti"
+    auction_queries:
+      - "RTX 3090 Ti"
+
+  - id: rtx_3080_ti
+    name: NVIDIA GeForce RTX 3080 Ti
+    category: gpu
+    priority: normal
+    condition_class: used_working
+    aliases:
+      - "rtx 3080 ti"
+      - "geforce rtx 3080 ti"
+      - "nvidia rtx 3080 ti"
+    spec:
+      vram_gb: 12
+    queries:
+      - "RTX 3080 Ti"
+    variant_queries: []
+    auction_queries:
+      - "RTX 3080 Ti"
+
+  - id: rtx_3080
+    name: NVIDIA GeForce RTX 3080
+    category: gpu
+    priority: high
+    condition_class: used_working
+    aliases:
+      - "rtx 3080"
+      - "geforce rtx 3080"
+      - "nvidia rtx 3080"
+    forbidden_tokens:
+      - "3080 ti"
+    queries:
+      - "RTX 3080"
+    variant_queries:
+      - "RTX3080"
+      - "Grafikkarte RTX 3080"
+    auction_queries:
+      - "RTX 3080"
+
+  - id: rx_7900_xtx
+    name: AMD Radeon RX 7900 XTX
+    category: gpu
+    priority: high
+    condition_class: used_working
+    aliases:
+      - "rx 7900 xtx"
+      - "radeon rx 7900 xtx"
+      - "amd radeon rx 7900 xtx"
+    spec:
+      vram_gb: 24
+    queries:
+      - "RX 7900 XTX"
+    variant_queries:
+      - "7900XTX"
+      - "Radeon 7900 XTX"
+    auction_queries:
+      - "RX 7900 XTX"
+
+  - id: rx_7900_xt
+    name: AMD Radeon RX 7900 XT
+    category: gpu
+    priority: normal
+    condition_class: used_working
+    aliases:
+      - "rx 7900 xt"
+      - "radeon rx 7900 xt"
+      - "amd radeon rx 7900 xt"
+    forbidden_tokens:
+      - "7900 xtx"
+    spec:
+      vram_gb: 20
+    queries:
+      - "RX 7900 XT"
+    variant_queries: []
+    auction_queries:
+      - "RX 7900 XT"
+
+  - id: rx_6800_xt
+    name: AMD Radeon RX 6800 XT
+    category: gpu
+    priority: normal
+    condition_class: used_working
+    aliases:
+      - "rx 6800 xt"
+      - "radeon rx 6800 xt"
+      - "amd radeon rx 6800 xt"
+    spec:
+      vram_gb: 16
+    queries:
+      - "RX 6800 XT"
+    variant_queries: []
+    auction_queries:
+      - "RX 6800 XT"
+
+  - id: ryzen_5800x3d
+    name: AMD Ryzen 7 5800X3D
+    category: cpu
+    priority: high
+    condition_class: used_working
+    aliases:
+      - "ryzen 7 5800x3d"
+      - "ryzen 5800x3d"
+      - "amd ryzen 7 5800x3d"
+    queries:
+      - "Ryzen 7 5800X3D"
+    variant_queries:
+      - "5800X3D"
+    auction_queries:
+      - "Ryzen 7 5800X3D"
+
+  - id: ryzen_5700x3d
+    name: AMD Ryzen 7 5700X3D
+    category: cpu
+    priority: normal
+    condition_class: used_working
+    aliases:
+      - "ryzen 7 5700x3d"
+      - "ryzen 5700x3d"
+      - "amd ryzen 7 5700x3d"
+    queries:
+      - "Ryzen 7 5700X3D"
+    variant_queries: []
+    auction_queries:
+      - "Ryzen 7 5700X3D"
+
+  - id: intel_i7_12700k
+    name: Intel Core i7-12700K
+    category: cpu
+    priority: high
+    condition_class: used_working
+    aliases:
+      - "i7 12700k"
+      - "core i7 12700k"
+      - "intel core i7 12700k"
+    queries:
+      - "i7 12700K"
+    variant_queries:
+      - "12700K"
+    auction_queries:
+      - "i7 12700K"
+
+  - id: crucial_32gb_ddr4_3200
+    name: Crucial 32GB DDR4-3200 kit
+    category: ram
+    priority: normal
+    condition_class: used_working
+    aliases:
+      - "crucial 32gb ddr4 3200"
+      - "crucial 2x16gb ddr4 3200"
+      - "ballistix 32gb ddr4 3200"
+    spec:
+      ram_gen: ddr4
+      capacity_gb: 32
+    queries:
+      - "Crucial 32GB DDR4 3200"
+    variant_queries: []
+    auction_queries:
+      - "Crucial 32GB DDR4 3200"
+
+  - id: samsung_990_pro_2tb
+    name: Samsung 990 Pro 2TB
+    category: storage
+    priority: normal
+    condition_class: used_working
+    aliases:
+      - "990 pro 2tb"
+      - "samsung 990 pro 2tb"
+      - "samsung 990 pro 2 tb"
+      - "mz v9p2t0"
+    spec:
+      capacity_tb: 2
+    queries:
+      - "Samsung 990 Pro 2TB"
+    variant_queries: []
+    auction_queries:
+      - "Samsung 990 Pro 2TB"
+
+  - id: wd_red_8tb
+    name: WD Red 8TB NAS drive
+    category: storage
+    priority: normal
+    condition_class: used_working
+    aliases:
+      - "wd red 8tb"
+      - "western digital red 8tb"
+      - "wd80efax"
+      - "wd80efzz"
+    spec:
+      capacity_tb: 8
+    queries:
+      - "WD Red 8TB"
+    variant_queries: []
+    auction_queries:
+      - "WD Red 8TB"
+
+  - id: asus_rog_strix_b550_f
+    name: ASUS ROG Strix B550-F Gaming
+    category: motherboard
+    priority: normal
+    condition_class: used_working
+    aliases:
+      - "rog strix b550 f"
+      - "b550 f gaming"
+      - "asus rog strix b550 f gaming"
+    required_tokens:
+      - "b550"
+    queries:
+      - "ASUS ROG Strix B550-F"
+    variant_queries: []
+    auction_queries:
+      - "ASUS ROG Strix B550-F"
+
+# Bundles take a separate, more conservative valuation path.
+bundles:
+  - id: gpu_lot
+    name: GPU lot
+    category: bundle
+    priority: normal
+    queries:
+      - "GPU lot"
+      - "Grafikkarten Konvolut"
+      - "lotto schede video"
+      - "graphics card bundle"
+    use_category_filter: true
+  - id: workstation_parts
+    name: Workstation parts bundle
+    category: bundle
+    priority: normal
+    queries:
+      - "workstation bundle"
+      - "Workstation Konvolut"
+      - "PC parts bundle"
+      - "ricambi workstation"
+    use_category_filter: true
+  - id: ram_lot
+    name: RAM lot
+    category: bundle
+    priority: normal
+    queries:
+      - "DDR4 RAM lot"
+      - "RAM Konvolut"
+      - "lotto RAM DDR4"
+    use_category_filter: true
+  - id: ssd_lot
+    name: SSD lot
+    category: bundle
+    priority: normal
+    queries:
+      - "SSD lot"
+      - "SSD Konvolut"
+      - "lotto SSD"
+    use_category_filter: true
+
+# Daily broad scans surface model names not yet in the catalogue. They are
+# logged for catalogue expansion and only alert when a known product matches.
+broad_searches:
+  - query: "graphics card"
+    category: gpu
+    marketplaces: [EBAY_IT, EBAY_DE, EBAY_AT]
+    use_category_filter: true
+  - query: "Grafikkarte"
+    category: gpu
+    marketplaces: [EBAY_DE, EBAY_AT]
+    use_category_filter: true
+  - query: "scheda video"
+    category: gpu
+    marketplaces: [EBAY_IT]
+    use_category_filter: true
+  - query: "workstation parts"
+    category: bundle
+    marketplaces: [EBAY_IT, EBAY_DE]
+    use_category_filter: true

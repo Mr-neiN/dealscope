@@ -1,0 +1,46 @@
+name: ebay-scanner
+
+services:
+  ebay-scanner:
+    build:
+      context: .
+      target: runtime
+    image: ebay-scanner:local
+    container_name: ebay-scanner
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-Europe/Rome}
+    volumes:
+      # Persistent SQLite database, WAL files and backups.
+      - ./data:/app/data
+      # Read-only search catalogue and valuation references.
+      - ./config:/app/config:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # The image runs as 10001:10001. Override to match the owner of ./data on
+    # Linux, or chown ./data to 10001:10001 first.
+    user: "${SCANNER_UID:-10001}:${SCANNER_GID:-10001}"
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 180s

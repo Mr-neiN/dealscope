@@ -1,0 +1,147 @@
+# Valuation fallback data.
+#
+# These are ILLUSTRATIVE starting points, not researched sold prices. They are
+# marked verified: false, which makes them provisional evidence: the scanner
+# will log candidates in shadow mode but will not send normal alerts from them.
+#
+# To make the scanner trustworthy:
+#   1. Replace each price with a value you verified against sold items, a
+#      reputable price tracker, or your own completed purchases.
+#   2. Set verified: true, sample_size to the number of observations, and
+#      observed_at to the date of the evidence.
+#   3. Alternatively import real sold observations:
+#      docker compose exec ebay-scanner python -m src.main add-comparable \
+#        --product rtx_3090 --price 480 --condition used_working \
+#        --source "eBay sold items, 2026-10" --verified
+#
+# Keep separate entries per condition. Never use defective or parts-only
+# prices to value a working item.
+
+references:
+  - product_id: rtx_4090
+    condition_class: used_working
+    price_eur: 1250
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: rtx_4080
+    condition_class: used_working
+    price_eur: 750
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: rtx_3090
+    condition_class: used_working
+    price_eur: 520
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: rtx_3090_ti
+    condition_class: used_working
+    price_eur: 700
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: rtx_3080_ti
+    condition_class: used_working
+    price_eur: 430
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: rtx_3080
+    condition_class: used_working
+    price_eur: 330
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: rx_7900_xtx
+    condition_class: used_working
+    price_eur: 650
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: rx_7900_xt
+    condition_class: used_working
+    price_eur: 480
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: rx_6800_xt
+    condition_class: used_working
+    price_eur: 300
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: ryzen_5800x3d
+    condition_class: used_working
+    price_eur: 200
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: ryzen_5700x3d
+    condition_class: used_working
+    price_eur: 140
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: intel_i7_12700k
+    condition_class: used_working
+    price_eur: 160
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: crucial_32gb_ddr4_3200
+    condition_class: used_working
+    price_eur: 55
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: samsung_990_pro_2tb
+    condition_class: used_working
+    price_eur: 120
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: wd_red_8tb
+    condition_class: used_working
+    price_eur: 150
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
+
+  - product_id: asus_rog_strix_b550_f
+    condition_class: used_working
+    price_eur: 90
+    sample_size: 0
+    verified: false
+    source: "PLACEHOLDER - replace with verified sold evidence"
+    observed_at: null
