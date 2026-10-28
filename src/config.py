@@ -21,6 +21,18 @@ from src.money import MoneyError, parse_eur_minor
 CONDITION_CLASSES = ("new", "used_working", "refurbished", "for_parts", "unknown")
 PRIORITIES = ("high", "normal", "low")
 
+# Manual review decisions recorded per listing. Shared by the CLI and the
+# local web dashboard, which both persist user feedback.
+DECISIONS = (
+    "good_deal",
+    "purchased",
+    "wrong_product",
+    "defective",
+    "unavailable",
+    "too_risky",
+    "not_needed",
+)
+
 
 class ConfigError(ValueError):
     """Configuration is missing or inconsistent."""

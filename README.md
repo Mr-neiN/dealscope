@@ -245,6 +245,36 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 .venv/bin/python -m pytest
 ```
 
+## Local web dashboard
+
+A minimal, dependency-free dashboard reads the same SQLite database the
+scanner writes:
+
+```bash
+# next to the scanner container (GUI_BIND/GUI_PORT control the bridge)
+docker compose up -d gui
+# then open http://127.0.0.1:8080
+
+# or without Docker, in the project (reads DATABASE_PATH)
+python -m src.main gui --host 127.0.0.1 --port 8080
+```
+
+It shows live stats (listings, alerts, daily API budget, scheduler heartbeat),
+a filterable/sortable listings table (product, marketplace, condition, risk,
+min discount, min savings, max total cost, auctions ending soon), pending and
+delivered alerts, and per-listing manual review decisions (the same decisions
+as `record-decision`) for feedback-driven tuning.
+
+Security notes:
+
+- The dashboard is read-only except for manual decisions; it talks only to
+  the local SQLite file.
+- The compose file binds it to host loopback (`GUI_BIND=127.0.0.1`) by
+  default. Only set `GUI_BIND=0.0.0.0` on a trusted LAN; the UI has no
+  authentication. eBay/Telegram credentials are never exposed through it.
+- It runs as a separate container sharing `./data`, so the scanner's memory
+  and CPU limits are unaffected.
+
 ## Security
 
 - `.env` is git-ignored and excluded from the image context. Secrets are only
@@ -264,8 +294,9 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
   buying.
 - Import VAT is estimated (22% for Italy) when a non-EU seller provides no
   import charge. It is never added to normal intra-EU purchases.
-- Image verification, LLM title understanding, dashboards and automatic
-  bidding are intentionally out of scope for the first version.
+- Image verification, LLM title understanding and automatic bidding are
+  intentionally out of scope for the first version. The local dashboard is
+  read-only over the same database and does not change this.
 
 ## Layout
 
@@ -281,6 +312,7 @@ src/
   ranking/scorer.py       deal score, confidence, risk, auction max bid
   storage/                SQLite schema and repository
   alerts/                 Telegram formatting, dedupe, delivery states
+  gui/                    local web dashboard (stdlib http.server + vanilla JS)
   monitoring/             JSON logging and quality metrics
 config/
   products.yaml

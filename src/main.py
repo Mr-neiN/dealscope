@@ -20,6 +20,7 @@ from src.alerts.service import AlertService
 from src.alerts.telegram import TelegramNotifier
 from src.config import (
     CONDITION_CLASSES,
+    DECISIONS,
     AppConfig,
     ConfigError,
     Settings,
@@ -32,6 +33,7 @@ from src.ebay.client import EbayClient
 from src.ebay.models import EbayParseError, parse_item_detail
 from src.ebay.quota import QuotaLedger
 from src.ebay.taxonomy import TaxonomyService
+from src.gui.server import DashboardOptions, GuiServer
 from src.monitoring.logging_setup import configure_logging
 from src.monitoring.metrics import generate_report, render_report
 from src.money import MoneyError, parse_eur_minor
@@ -47,15 +49,6 @@ from src.storage.repository import Repository, utc_now
 
 log = logging.getLogger(__name__)
 
-DECISIONS = (
-    "good_deal",
-    "purchased",
-    "wrong_product",
-    "defective",
-    "unavailable",
-    "too_risky",
-    "not_needed",
-)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -809,6 +802,39 @@ def cmd_health(config: AppConfig | None = None, args: argparse.Namespace | None 
     return health_main()
 
 
+def cmd_gui(config: AppConfig, args: argparse.Namespace) -> int:
+    """Serve the local web dashboard over the scanner's database.
+
+    Deliberately does not require eBay or Telegram credentials: it only
+    reads the SQLite file and records manual review decisions.
+    """
+    if not config.settings.database_path.exists():
+        raise ConfigError(
+            "no scanner database found at "
+            f"{config.settings.database_path}; run the scanner first "
+            "(docker compose up ebay-scanner) so there is data to browse"
+        )
+    server = GuiServer(
+        DashboardOptions(
+            database_path=config.settings.database_path,
+            shadow_mode=config.settings.shadow_mode,
+            heartbeat_path=_heartbeat_path(config),
+            daily_budget=config.effective_daily_budget,
+        )
+    )
+    print(
+        f"dashboard: http://{args.host}:{args.port} "
+        f"(database: {config.settings.database_path})"
+    )
+    if config.settings.shadow_mode:
+        print("shadow mode is active: candidate alerts are recorded but not sent")
+    try:
+        server.serve_forever(args.host, args.port)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 # --------------------------------------------------------------------- helpers
 def _install_signal_handlers(stop: threading.Event) -> None:
     def handler(signum: int, frame: Any) -> None:  # noqa: ARG001
@@ -980,6 +1006,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     notify = sub.add_parser("notify-test", help="send a Telegram test message")
     notify.set_defaults(func=cmd_notify_test)
+
+    gui = sub.add_parser("gui", help="serve the local web dashboard")
+    gui.add_argument("--host", default=os.environ.get("GUI_HOST", "127.0.0.1"))
+    gui.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("GUI_PORT", "8080")),
+    )
+    gui.set_defaults(func=cmd_gui)
 
     health = sub.add_parser("health", help="container health check")
     health.set_defaults(func=cmd_health)
