@@ -38,6 +38,24 @@ PAGE_SIZE = 50
 BUNDLE_CATEGORY = "bundle"
 
 
+def _effective_match_confidence(match: MatchResult, risk: RiskAssessment) -> float:
+    """Confidence actually usable for scoring.
+
+    A bundle whose components were identified only from weak wording cannot
+    claim the per-match confidence that a single exact model earns. The
+    discount thresholds for bundles compensate by being stricter.
+    """
+    if not risk.is_bundle:
+        return match.overall_confidence
+    verified_count = sum(
+        1
+        for candidate in match.components
+        if candidate.matched_phrase and candidate.confidence >= 0.6
+    )
+    if verified_count < 2:
+        return min(match.overall_confidence, 0.45)
+    return min(match.overall_confidence, 0.55 + 0.05 * (verified_count - 2))
+
 class Scanner:
     def __init__(
         self,
@@ -68,6 +86,7 @@ class Scanner:
         self._quota = quota
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._bundles = {bundle.id: bundle for bundle in config.bundles}
+
 
     def run_search(self, profile: SearchProfile) -> SearchOutcome:
         now = self._clock()
@@ -391,7 +410,7 @@ class Scanner:
         evaluation = self._scorer.evaluate(
             listing=record,
             product=match.primary.product if match.primary else None,
-            match_confidence=match.overall_confidence,
+            match_confidence=_effective_match_confidence(match, risk),
             risk=risk,
             valuation=valuation,
             cost=cost,

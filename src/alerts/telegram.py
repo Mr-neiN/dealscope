@@ -8,6 +8,7 @@ deal. Delivery is only recorded after Telegram confirms the message.
 from __future__ import annotations
 
 import html
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
@@ -29,6 +30,16 @@ class TelegramRateLimited(TelegramError):
     def __init__(self, retry_after: float | None, message: str) -> None:
         self.retry_after = retry_after
         super().__init__(message)
+
+
+_BOT_TOKEN_RE = re.compile(r"bot\d+:[A-Za-z0-9_-]{15,}")
+
+
+def _redact(text: str, token: str | None = None) -> str:
+    """Strip bot tokens from exception text before it reaches logs or SQLite."""
+    if token:
+        text = text.replace(token, "***REDACTED***")
+    return _BOT_TOKEN_RE.sub("bot***REDACTED***", text)
 
 
 class TelegramNotifier:
@@ -69,7 +80,9 @@ class TelegramNotifier:
                 },
             )
         except (httpx.TimeoutException, httpx.TransportError) as exc:
-            raise TelegramError(f"Telegram network error: {exc}") from exc
+            raise TelegramError(
+                f"Telegram network error: {_redact(str(exc), self._token)}"
+            ) from exc
         if response.status_code == 429:
             retry_after = None
             try:
@@ -107,10 +120,10 @@ def _telegram_error(response: httpx.Response) -> str:
     try:
         payload = response.json()
     except ValueError:
-        return response.text[:300]
+        return _redact(response.text[:300])
     if isinstance(payload, Mapping):
-        return str(payload.get("description") or payload)[:300]
-    return str(payload)[:300]
+        return _redact(str(payload.get("description") or payload)[:300])
+    return _redact(str(payload)[:300])
 
 
 def format_alert(payload: Mapping[str, Any]) -> str:

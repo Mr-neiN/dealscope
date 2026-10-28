@@ -174,8 +174,14 @@ class ListingClassifier:
             raise_risk("high")
 
         untested_hits = contains_any(text, self._untested)
-        if untested_hits:
-            flags.extend(f"untested:{hit}" for hit in untested_hits)
+        # Item details can reveal untested status that the title does not
+        # mention; eBay condition labels rarely cover "powers on, not tested".
+        detail_untested_hits = contains_any(detail_normalized, self._untested)
+        untested_all = untested_hits + detail_untested_hits
+        if untested_hits or detail_untested_hits:
+            flags.extend(f"untested:{hit}" for hit in untested_all)
+            if detail_untested_hits:
+                flags.append("untested_in_description")
             reasons.append("functionality is not confirmed")
             raise_risk("high")
 
@@ -238,5 +244,5 @@ class ListingClassifier:
             flags=tuple(flags),
             reasons=tuple(reasons),
             is_bundle=is_bundle,
-            is_untested=bool(untested_hits),
+            is_untested=bool(untested_all),
         )
