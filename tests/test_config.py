@@ -47,6 +47,24 @@ def test_duplicate_product_ids_rejected(monkeypatch, tmp_path):
         load_config(dict(ENV, CONFIG_DIR=str(config_dir)), base_dir=PROJECT_ROOT)
 
 
+def test_unknown_but_wellformed_marketplace_warns_and_is_accepted(tmp_path, caplog):
+    from pathlib import Path
+    import logging
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    for name in ("products.yaml", "references.yaml", "exclusions.yaml"):
+        source = Path(PROJECT_ROOT / "config") / name
+        text = source.read_text(encoding="utf-8")
+        if name == "products.yaml":
+            text = text.replace("  - EBAY_AT\n", "  - EBAY_AT\n  - EBAY_ZZ\n", 1)
+        (config_dir / name).write_text(text, encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="src.config"):
+        config = load_config(dict(ENV, CONFIG_DIR=str(config_dir)), base_dir=PROJECT_ROOT)
+    assert config.marketplaces == ("EBAY_IT", "EBAY_DE", "EBAY_AT", "EBAY_ZZ")
+    assert any("EBAY_ZZ" in record.message for record in caplog.records)
+
+
 def test_verified_reference_without_evidence_rejected(tmp_path):
     from pathlib import Path
 

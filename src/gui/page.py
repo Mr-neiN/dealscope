@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from src.ebay.models import render_marketplace_options
+
 PAGE_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -148,8 +150,7 @@ td .meta { color: var(--muted); font-size: 12px; }
   <select id="category"><option value="">Category: all</option></select>
   <select id="marketplace">
     <option value="">Market: all</option>
-    <option value="EBAY_IT">Italy</option><option value="EBAY_DE">Germany</option>
-    <option value="EBAY_AT">Austria</option><option value="EBAY_FR">France</option>
+    <!--MARKET_OPTIONS-->
   </select>
   <div class="multifilter" id="condition-boxes"
        title="Condition — tick any combination, none selected means all">
@@ -696,3 +697,9 @@ td .meta { color: var(--muted); font-size: 12px; }
 </body>
 </html>
 """
+
+# Fill the marketplace dropdown from the supported table so the dashboard
+# matches whatever sites the configuration uses, not a hardcoded trio.
+PAGE_HTML = PAGE_HTML.replace(
+    "<!--MARKET_OPTIONS-->", render_marketplace_options()
+)

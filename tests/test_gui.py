@@ -11,6 +11,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from src.gui.page import PAGE_HTML
 from src.gui.server import DashboardOptions, DashboardStore, make_handler
 
 
@@ -240,6 +241,22 @@ def test_decision_endpoint_records_feedback(server, tmp_path):
         timeout=5,
     )
     assert empty.status_code == 400
+
+
+def test_marketplace_dropdown_lists_all_supported_markets():
+    """The dashboard dropdown is generated, so non-default sites appear too."""
+    assert 'value="EBAY_IT"' in PAGE_HTML
+    assert 'value="EBAY_GB"' in PAGE_HTML
+    assert 'value="EBAY_US"' in PAGE_HTML
+    assert "<!--MARKET_OPTIONS-->" not in PAGE_HTML
+
+
+def test_marketplace_dropdown_lists_all_supported_markets():
+    """The dashboard dropdown is generated, so non-default sites appear too."""
+    assert 'value="EBAY_IT"' in PAGE_HTML
+    assert 'value="EBAY_GB"' in PAGE_HTML
+    assert 'value="EBAY_US"' in PAGE_HTML
+    assert "<!--MARKET_OPTIONS-->" not in PAGE_HTML
 
 
 def test_dashboard_html_is_served(server):

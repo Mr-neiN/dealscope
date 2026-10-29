@@ -1,8 +1,13 @@
 # eBay hardware deal scanner
 
-A personal-use scanner for underpriced GPUs and PC hardware on eBay Italy,
-Germany and Austria. It finds listings, identifies the exact product, excludes
+A personal-use scanner for underpriced GPUs and PC hardware on eBay marketplaces.
+The reference setup is configured for eBay Italy, Germany and Austria, but the
+marketplaces are plain configuration: any site the eBay Browse API supports
+for your key works (including EBAY_GB, EBAY_US, EBAY_PL and other non-EU
+sites), and the ship-to country follows SHIP_TO_COUNTRY rather than a
+hardcoded assumption. It finds listings, identifies the exact product, excludes
 broken items and accessories, estimates a realistic fair value with an explicit
+
 evidence source, and sends a deduplicated Telegram alert when the total cost is
 genuinely below that value.
 
@@ -73,8 +78,10 @@ docker compose logs -f ebay-scanner
 The feasibility command checks, with real production calls:
 
 - OAuth client-credentials token issuance.
-- Italian marketplace search and usable listing fields.
-- German and Austrian searches and per-offer shipping data for Italy.
+- Search and usable listing fields on each configured marketplace (the first
+  configured one is treated as primary).
+- Per-offer shipping data on the remaining marketplaces, cross-checked against
+  delivery to your configured `SHIP_TO_COUNTRY`.
 - Item detail access (description, aspects, shipping signals).
 - Taxonomy access for category-scoped broad searches.
 - Whether your planned schedule fits your configured daily budget.

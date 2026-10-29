@@ -7,6 +7,7 @@ running the scanner with a half-valid catalogue.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -16,10 +17,13 @@ from typing import Any, Mapping
 
 import yaml
 
+from src.ebay.models import SUPPORTED_MARKETPLACE_IDS
 from src.money import MoneyError, parse_eur_minor
 
 CONDITION_CLASSES = ("new", "used_working", "refurbished", "for_parts", "unknown")
 PRIORITIES = ("high", "normal", "low")
+
+logger = logging.getLogger(__name__)
 
 # Manual review decisions recorded per listing. Shared by the CLI and the
 # local web dashboard, which both persist user feedback.
@@ -439,6 +443,8 @@ def _load_settings(environment: Mapping[str, str], base: Path) -> Settings:
     daily_budget = _positive_int(daily_budget_raw, "DAILY_CALL_BUDGET") if daily_budget_raw else None
     config_dir = Path(get("CONFIG_DIR") or base / "config")
     database_path = Path(get("DATABASE_PATH") or base / "data" / "scanner.db")
+    # Any ISO-3166 alpha-2 code works; "IT" is only the historical default of
+    # the reference setup (import-cost estimates derive their VAT rate from it).
     ship_to_country = (get("SHIP_TO_COUNTRY") or "IT").upper()
     if len(ship_to_country) != 2:
         raise ConfigError("SHIP_TO_COUNTRY must be a two-letter ISO country code")
@@ -520,6 +526,15 @@ def _parse_marketplaces(value: object) -> tuple[str, ...]:
     for entry in value:
         if not isinstance(entry, str) or not re.fullmatch(r"EBAY_[A-Z]{2}", entry):
             raise ConfigError(f"invalid marketplace id: {entry!r}")
+        if entry not in SUPPORTED_MARKETPLACE_IDS:
+            # eBay adds sites over time; an unknown-but-well-formed id is
+            # accepted so the scanner stays usable on any marketplace the
+            # Browse API supports for the operator's key.
+            logger.warning(
+                "marketplace %s is not on the scanner's curated supported list; "
+                "verify it is enabled for your Browse API key before relying on it",
+                entry,
+            )
         if entry not in marketplaces:
             marketplaces.append(entry)
     return tuple(marketplaces)

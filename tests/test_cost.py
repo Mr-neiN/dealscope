@@ -78,6 +78,59 @@ def test_eu_seller_never_gets_import_charges_added(config):
     assert cost.total_eur_minor == 22_000
 
 
+def test_delivery_country_vat_rate_is_country_specific(config):
+    """A CH seller selling into DE/PL uses that country's standard VAT rate."""
+    de_cost = compute_cost(
+        price_eur_minor=20_000,
+        shipping_eur_minor=2_000,
+        import_charges_eur_minor=None,
+        seller_country="CH",
+        delivery_country="DE",
+        category=config.categories["gpu"],
+        alerts=config.alerts,
+    )
+    assert de_cost.import_estimated
+    assert de_cost.import_charges_eur_minor == int((20_000 + 2_000) * 0.19 + 0.5)
+    assert any("19% (DE)" in note for note in de_cost.notes)
+
+    pl_cost = compute_cost(
+        price_eur_minor=20_000,
+        shipping_eur_minor=2_000,
+        import_charges_eur_minor=None,
+        seller_country="CH",
+        delivery_country="PL",
+        category=config.categories["gpu"],
+        alerts=config.alerts,
+    )
+    assert pl_cost.import_charges_eur_minor == int((20_000 + 2_000) * 0.23 + 0.5)
+    assert any("23% (PL)" in note for note in pl_cost.notes)
+
+
+def test_unknown_delivery_country_gets_no_import_estimate(config):
+    """A non-EU destination is not auto-estimated; only EU delivery is."""
+    cost = compute_cost(
+        price_eur_minor=20_000,
+        shipping_eur_minor=2_000,
+        import_charges_eur_minor=None,
+        seller_country="CH",
+        delivery_country="ZZ",
+        category=config.categories["gpu"],
+        alerts=config.alerts,
+    )
+    assert not cost.import_estimated
+    assert cost.import_charges_eur_minor == 0
+
+
+def test_import_vat_pct_fallback_for_unlisted_eu_country():
+    """The rate table covers all EU members; a future member uses the fallback."""
+    from src.pricing.cost import import_vat_pct
+
+    assert import_vat_pct("it") == 22.0
+    assert import_vat_pct("DE") == 19.0
+    assert import_vat_pct("PL") == 23.0
+    assert import_vat_pct("ZZ") == import_vat_pct(None)  # fallback 22.0
+
+
 def test_negative_inputs_are_clamped(config):
     cost = compute_cost(
         price_eur_minor=1_000,

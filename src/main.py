@@ -467,9 +467,11 @@ def cmd_feasibility(config: AppConfig, args: argparse.Namespace) -> int:
             _finish_feasibility(config, checks, marketplaces_report, runtime, args)
             return 1
 
-        targets = ["EBAY_IT"]
-        for marketplace in ("EBAY_DE", "EBAY_AT"):
-            if marketplace in config.marketplaces:
+        primary = config.marketplaces[0]
+        delivery_country = config.delivery.country
+        targets = [primary]
+        for marketplace in config.marketplaces:
+            if marketplace != primary:
                 targets.append(marketplace)
         query = config.products[0].queries[0]
         item_fields_ok = True
@@ -502,7 +504,7 @@ def cmd_feasibility(config: AppConfig, args: argparse.Namespace) -> int:
             if not page.items:
                 entry["detail"] = "no listings returned"
                 marketplaces_report.append(entry)
-                if marketplace == "EBAY_IT":
+                if marketplace == primary:
                     item_fields_ok = False
                 continue
 
@@ -531,7 +533,7 @@ def cmd_feasibility(config: AppConfig, args: argparse.Namespace) -> int:
                 if fields_ok
                 else "one or more required fields were missing",
             )
-            if marketplace == "EBAY_IT":
+            if marketplace == primary:
                 item_fields_ok = item_fields_ok and fields_ok
 
             detail_ok: bool | None = None
@@ -561,19 +563,19 @@ def cmd_feasibility(config: AppConfig, args: argparse.Namespace) -> int:
                     else "item detail was readable but description or shipping was absent",
                     required=False,
                 )
-                if marketplace == "EBAY_IT" and not fields_ok:
+                if marketplace == primary and not fields_ok:
                     item_fields_ok = False
-                if marketplace in ("EBAY_DE", "EBAY_AT"):
+                if marketplace != primary:
                     if detail.shipping.ship_to_ok is False:
                         delivery_ok = False
                     elif detail.shipping.ship_to_ok is True:
                         delivery_ok = True if delivery_ok is None else delivery_ok
             except Exception as exc:
                 entry["detail_error"] = f"{type(exc).__name__}: {exc}"
-                if marketplace in ("EBAY_DE", "EBAY_AT"):
+                if marketplace != primary:
                     delivery_ok = None
 
-            if marketplace != "EBAY_IT":
+            if marketplace != primary:
                 ship = item.shipping.ship_to_ok
                 if ship is not None:
                     delivery_ok = bool(ship) if delivery_ok is None else delivery_ok and bool(ship)
@@ -582,22 +584,23 @@ def cmd_feasibility(config: AppConfig, args: argparse.Namespace) -> int:
         check(
             "listing_fields",
             item_fields_ok,
-            "usable listing fields verified on the Italian marketplace",
+            f"usable listing fields verified on the primary marketplace ({primary})",
         )
-        if "EBAY_DE" in targets or "EBAY_AT" in targets:
+        if len(targets) > 1:
             check(
-                "delivery_to_italy",
+                f"delivery_to_{delivery_country.lower()}",
                 delivery_ok,
-                "delivery to Italy confirmed by item shipping data"
+                "item data confirmed offers delivering to "
+                f"{delivery_country}"
                 if delivery_ok is True
                 else "only the eBay deliveryCountry filter could confirm shipping"
                 if delivery_ok is None
-                else "at least one offer did not ship to Italy",
+                else "at least one offer did not ship to " + delivery_country,
             )
 
         try:
             category = runtime.taxonomy.category_for(
-                "EBAY_IT",
+                primary,
                 config.categories["gpu"].taxonomy_hint,
             )
             check(

@@ -45,6 +45,58 @@ EU_COUNTRIES = frozenset(
 )
 
 
+# The marketplace IDs the scanner knows about, with display names for the
+# dashboard dropdown and config feedback. This mirrors eBay's Browse API
+# marketplace support at the time of writing; eBay extends it over time, so an
+# unknown but well-formed id (EBAY_XX format) is accepted with a warning — only
+# genuinely malformed ids fail configuration validation.
+SUPPORTED_MARKETPLACES: tuple[tuple[str, str], ...] = (
+    ("EBAY_AT", "Austria"),
+    ("EBAY_AU", "Australia"),
+    ("EBAY_BE", "Belgium"),
+    ("EBAY_CA", "Canada"),
+    ("EBAY_CH", "Switzerland"),
+    ("EBAY_CZ", "Czechia"),
+    ("EBAY_DE", "Germany"),
+    ("EBAY_ES", "Spain"),
+    ("EBAY_FR", "France"),
+    ("EBAY_GB", "United Kingdom"),
+    ("EBAY_IE", "Ireland"),
+    ("EBAY_IT", "Italy"),
+    ("EBAY_NL", "Netherlands"),
+    ("EBAY_PL", "Poland"),
+    ("EBAY_PT", "Portugal"),
+    ("EBAY_US", "United States"),
+)
+SUPPORTED_MARKETPLACE_IDS = frozenset(marketplace_id for marketplace_id, _ in SUPPORTED_MARKETPLACES)
+
+
+def marketplace_display_name(marketplace_id: str) -> str:
+    """Human label for a marketplace, falling back to the raw id."""
+    code = (marketplace_id or "").upper()
+    for supported_id, display_name in SUPPORTED_MARKETPLACES:
+        if supported_id == code:
+            return display_name
+    return code
+
+
+def render_marketplace_options() -> str:
+    """HTML <option> list for the dashboard marketplace dropdown."""
+    return "".join(
+        f'<option value="{marketplace_id}">{display_name}</option>'
+        for marketplace_id, display_name in SUPPORTED_MARKETPLACES
+    )
+
+
+def _marketplace_selfcheck() -> None:
+    """Fail fast at import time if the curated table is inconsistent."""
+    if len(SUPPORTED_MARKETPLACE_IDS) != len(SUPPORTED_MARKETPLACES):
+        raise RuntimeError("SUPPORTED_MARKETPLACES contains duplicate ids")
+
+
+_marketplace_selfcheck()
+
+
 class EbayParseError(ValueError):
     """An API response could not be interpreted safely."""
 

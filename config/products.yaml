@@ -4,12 +4,20 @@
 # The effective polling interval is recalculated from the daily API budget
 # at startup, so the values below are targets rather than guarantees.
 
+# The scanner works on any eBay marketplace the Browse API supports for your
+# key — add sites freely, including outside Europe (EBAY_GB, EBAY_US, EBAY_PL,
+# EBAY_ES, ...). Unknown but well-formed ids are accepted with a warning; each
+# extra marketplace increases scheduled calls per cycle. Ship-to reachability
+# is checked per offer against `delivery.country`.
 marketplaces:
   - EBAY_IT
   - EBAY_DE
   - EBAY_AT
 
 delivery:
+  # ISO-3166 alpha-2 code (any eBay-supported destination). Drives the
+  # deliveryCountry refusal filter and the import VAT estimate, whose rate
+  # follows this country (e.g. IT 22%, DE 19%, AT 20%, PL 23%).
   country: IT
   postal_code: null
 

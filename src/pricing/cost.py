@@ -12,11 +12,30 @@ from decimal import Decimal, ROUND_HALF_UP
 from src.config import AlertConfig, CategorySpec
 from src.ebay.models import EU_COUNTRIES
 
-# Conservative fallback for sellers outside the EU when eBay does not supply
-# an import charge. Italian import VAT is 22%; duty varies by goods and is not
-# applied to used personal computer hardware in this model.
-IMPORT_VAT_PCT = 22.0
+# Import VAT applies when the seller is outside the EU and the delivery
+# country is inside it. Standard rates follow each EU member state's rate
+# from the Commission's VAT rate list; duty is not applied to used personal
+# computer hardware in this model. Italy is no longer a special case: the
+# VAT rate follows the configured ship-to country.
+EU_STANDARD_VAT_PCT: dict[str, float] = {
+    "AT": 20.0, "BE": 21.0, "BG": 20.0, "HR": 25.0, "CY": 19.0,
+    "CZ": 21.0, "DK": 25.0, "EE": 22.0, "FI": 25.5, "FR": 20.0,
+    "DE": 19.0, "GR": 24.0, "HU": 27.0, "IE": 23.0, "IT": 22.0,
+    "LV": 21.0, "LT": 21.0, "LU": 17.0, "MT": 18.0, "NL": 21.0,
+    "PL": 23.0, "PT": 23.0, "RO": 19.0, "SK": 23.0, "SI": 22.0,
+    "ES": 21.0, "SE": 25.0,
+}
+# Fallback when the delivery country is not in the table (an unknown or newly
+# added EU member). Rates change periodically; re-verify against the EU VAT
+# rate list occasionally. Country codes are upper-cased before the lookup.
+DEFAULT_IMPORT_VAT_PCT = 22.0
 IMPORT_DUTY_PCT = 0.0
+
+
+def import_vat_pct(delivery_country: str | None) -> float:
+    """Standard VAT rate of the delivery country for import charge estimates."""
+    code = (delivery_country or "").upper()
+    return EU_STANDARD_VAT_PCT.get(code, DEFAULT_IMPORT_VAT_PCT)
 
 
 @dataclass(frozen=True)
@@ -70,14 +89,15 @@ def compute_cost(
         and delivery_country.upper() in EU_COUNTRIES
     ):
         taxable = price_eur_minor + shipping
-        estimate = (Decimal(taxable) * Decimal(str(IMPORT_VAT_PCT + IMPORT_DUTY_PCT)) / 100).quantize(
+        vat_pct = import_vat_pct(delivery_country)
+        estimate = (Decimal(taxable) * Decimal(str(vat_pct + IMPORT_DUTY_PCT)) / 100).quantize(
             Decimal("1"), rounding=ROUND_HALF_UP
         )
         import_charges = int(estimate)
         import_estimated = True
         notes.append(
             "seller outside the EU; import VAT estimated at "
-            f"{IMPORT_VAT_PCT:.0f}% (eBay charges may differ)"
+            f"{vat_pct:g}% ({delivery_country.upper()}) (eBay charges may differ)"
         )
     elif import_charges > 0:
         notes.append("import charges as quoted by eBay")
