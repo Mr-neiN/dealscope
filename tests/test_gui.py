@@ -172,6 +172,21 @@ def test_listing_filters_combine(server):
     assert [i["item_id"] for i in ok["items"]] == ["IT-DEAL"]
 
 
+def test_listing_condition_multi_select(server):
+    """Condition accepts a comma-separated subset, as the GUI chip group sends."""
+    mixed = httpx.get(
+        f"{server}/api/listings?condition=used_working,unknown", timeout=5
+    ).json()
+    assert {i["item_id"] for i in mixed["items"]} == {"IT-DEAL", "IT-AUCTION"}
+
+    parts = httpx.get(f"{server}/api/listings?condition=for_parts", timeout=5).json()
+    assert {i["item_id"] for i in parts["items"]} == {"DE-PARTS"}
+
+    bad = httpx.get(f"{server}/api/listings?condition=used_working,newlike", timeout=5)
+    assert bad.status_code == 400
+    assert "condition" in bad.json()["error"]
+
+
 def test_listing_sort_and_invalid_params(server):
     cheapest = httpx.get(
         f"{server}/api/listings?sort=price", timeout=5

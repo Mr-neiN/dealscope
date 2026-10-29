@@ -53,6 +53,19 @@ main { padding: 16px 18px; max-width: 1500px; margin: 0 auto; }
 .filters input[type=search] { min-width: 200px; }
 .filters label { color: var(--muted); font-size: 12px; display: flex;
   align-items: center; gap: 5px; }
+.multifilter { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+  flex-wrap: wrap; }
+.multifilter .mf-label { color: var(--muted); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .5px; margin-right: 2px; }
+.multifilter label { margin: 0; padding: 2px 10px; border: 1px solid var(--border);
+  border-radius: 999px; cursor: pointer; background: var(--panel); color: var(--muted);
+  font-size: 12px; user-select: none; }
+.multifilter label input { position: absolute; opacity: 0; pointer-events: none; }
+.multifilter label:has(input:checked) { background: var(--accent); border-color: var(--accent);
+  color: #fff; }
+.multifilter label:has(input:focus-visible) { outline: 2px solid var(--accent);
+  outline-offset: 1px; }
 #reset { background: var(--panel2); color: var(--muted); border: 1px dashed var(--border);
   border-radius: 6px; padding: 5px 10px; cursor: pointer; }
 table { width: 100%; border-collapse: collapse; background: var(--panel);
@@ -121,11 +134,16 @@ td .meta { color: var(--muted); font-size: 12px; }
     <option value="EBAY_IT">Italy</option><option value="EBAY_DE">Germany</option>
     <option value="EBAY_AT">Austria</option><option value="EBAY_FR">France</option>
   </select>
-  <select id="condition">
-    <option value="">Condition: all</option>
-    <option>used_working</option><option>new</option><option>refurbished</option>
-    <option>for_parts</option><option>unknown</option>
-  </select>
+  <div class="multifilter" id="condition-boxes"
+       title="Condition — tick any combination, none selected means all">
+    <span class="mf-label">Condition</span>
+    <label><input type="checkbox" value="new">New / open box</label>
+    <label><input type="checkbox" value="used_working">Used (working)</label>
+    <label><input type="checkbox" value="refurbished">Refurbished</label>
+    <label><input type="checkbox" value="for_parts">For parts</label>
+    <label><input type="checkbox" value="unknown">Unknown</label>
+  </div>
+  <input type="hidden" id="condition">
   <select id="buying_option">
     <option value="">Type: all</option><option value="fixed">Fixed</option>
     <option value="auction">Auction</option>
@@ -186,6 +204,8 @@ td .meta { color: var(--muted); font-size: 12px; }
     (m/100).toLocaleString("it-IT", {style:"currency", currency:"EUR", maximumFractionDigits:2}));
   const when = s => (s ? new Date(s).toLocaleString([], {dateStyle:"short", timeStyle:"short"}) : "—");
   const DECISIONS = ["good_deal","purchased","wrong_product","defective","unavailable","too_risky","not_needed"];
+  const CONDLABEL = {"new": "New", "used_working": "Used (working)",
+    "refurbished": "Refurbished", "for_parts": "For parts", "unknown": "Unknown"};
   const PARAMS = ["q","product","category","marketplace","condition","buying_option","status","risk",
     "ship","min_discount","min_savings_eur","min_score","max_total_eur","ending","deals_only",
     "has_alert","sort","limit"];
@@ -272,7 +292,8 @@ td .meta { color: var(--muted); font-size: 12px; }
     const opt = l.buying_option === "auction"
       ? `<span class="warn">auction</span><div class="meta">${l.bid_count ?? 0} bids · ends ${when(l.item_end_at)}</div>`
       : "fixed";
-    const cond = `<span>${esc(l.condition_class)}</span>` + (l.condition_label ? `<div class="meta">${esc(l.condition_label)}</div>` : "");
+    const cond = `<span>${esc(CONDLABEL[l.condition_class] || l.condition_class || "unknown")}</span>`
+      + (l.condition_label ? `<div class="meta">${esc(l.condition_label)}</div>` : "");
     const ship = l.shipping_eur_minor == null
       ? (l.shipping_known ? "—" : '<span class="warn">?</span>')
       : euro(l.shipping_eur_minor);
@@ -412,6 +433,16 @@ td .meta { color: var(--muted); font-size: 12px; }
     searchTimer = setTimeout(() => { offset = 0; loadListings().catch(e => flash(e.message)); }, 250);
   }
 
+  // condition is a checkbox chip group; the hidden #condition input carries
+  // the comma-joined values the API already understands (e.g. "new,refurbished")
+  const condBoxes = () => document.querySelectorAll("#condition-boxes input");
+  function syncCondition() {
+    $("condition").value = [...condBoxes()].filter(i => i.checked).map(i => i.value).join(",");
+  }
+  condBoxes().forEach(box => box.addEventListener("change", () => {
+    syncCondition(); scheduleListings();
+  }));
+
   for (const key of PARAMS) {
     const el = $(key);
     if (!el) continue;
@@ -429,6 +460,8 @@ td .meta { color: var(--muted); font-size: 12px; }
       const el = $(key);
       if (el) { if (el.type === "checkbox") el.checked = false; else if (key !== "limit" && key !== "sort") el.value = ""; }
     }
+    condBoxes().forEach(i => i.checked = false);
+    syncCondition();
     offset = 0; loadListings().catch(e => flash(e.message));
   });
   $("prev").addEventListener("click", () => {
