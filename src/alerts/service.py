@@ -125,7 +125,9 @@ class AlertService:
         if self._shadow_mode or self._notifier is None or not self._notifier.configured:
             return DeliveryStats()
         delivered = failed = retried = 0
-        for alert in self._repo.pending_alerts_due(now, limit=limit):
+        # Claimed rows are owned by this process until they reach delivered/
+        # failed/pending state; another deliverer cannot double-send them.
+        for alert in self._repo.claim_pending_alerts(now, limit=limit):
             age_hours = _age_hours(alert.created_at, now)
             if age_hours is not None and age_hours > MAX_ALERT_AGE_HOURS:
                 self._repo.mark_alert_failed(

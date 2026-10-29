@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Sequence
 
 from src.ebay.models import ListingItem
@@ -742,7 +742,46 @@ class Repository:
         ).fetchall()
         return [_alert_from_row(row) for row in rows]
 
+    # The grace-period for 'sending' rows: a crashed deliverer must free the
+    # alert for a later retry, but the window must be longer than any normal
+    # Telegram round-trip so a slow-but-successful send is not double-owned.
+    SENDING_GRACE_MINUTES = 5
+
+    def claim_pending_alerts(self, now: datetime, *, limit: int = 10) -> list[AlertRecord]:
+        """Atomically move due pending alerts to 'sending' (or reclaim stale
+        ones) and return the claimed rows.
+
+        The claim is a single UPDATE executed inside BEGIN IMMEDIATE, so two
+        scanner processes can never both take the same alert and each send a
+        Telegram message for the same deal.
+        """
+        now_iso = utc_iso(now)
+        grace = utc_iso(
+            now - timedelta(minutes=self.SENDING_GRACE_MINUTES)
+        )
+        with self.database.transaction() as connection:
+            rows = connection.execute(
+                """
+                UPDATE alerts
+                SET state='sending', updated_at=?,
+                    attempts=CASE WHEN state='sending' THEN attempts+1
+                                  ELSE attempts END
+                WHERE id IN (
+                    SELECT id FROM alerts
+                    WHERE (state='pending'
+                           AND (next_attempt_at IS NULL OR next_attempt_at<=?))
+                       OR (state='sending' AND updated_at<=?)
+                    ORDER BY priority DESC, created_at ASC
+                    LIMIT ?
+                )
+                RETURNING *
+                """,
+                (now_iso, now_iso, grace, limit),
+            ).fetchall()
+        return [_alert_from_row(row) for row in rows]
+
     def pending_alerts_due(self, now: datetime, limit: int = 20) -> list[AlertRecord]:
+        """For inspection only; delivery must go through claim_pending_alerts."""
         rows = self.database.connection.execute(
             """            SELECT * FROM alerts
             WHERE state='pending'
@@ -753,6 +792,72 @@ class Repository:
             (utc_iso(now), limit),
         ).fetchall()
         return [_alert_from_row(row) for row in rows]
+
+    # ------------------------------------------------------------ runner lock
+    LOCK_TTL_SECONDS = 120
+
+    def acquire_ownership(
+        self,
+        owner_id: str,
+        now: datetime | None = None,
+        *,
+        ttl_seconds: int = LOCK_TTL_SECONDS,
+        owner_host: str = "",
+    ) -> bool:
+        """Claim, renew or (after ttl) take over the singleton scan lease.
+
+        All decisions happen inside BEGIN IMMEDIATE, so concurrent claims
+        from several containers are serialized by SQLite. Renewal re-enters
+        when the row already belongs to ``owner_id``.
+        """
+        now = now or utc_now()
+        now_iso = utc_iso(now)
+        cutoff = utc_iso(now - timedelta(seconds=max(1, ttl_seconds)))
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                "SELECT owner_id, owner_host, renewed_at FROM runner_lock WHERE id=1"
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    "INSERT INTO runner_lock(id, owner_id, owner_host, renewed_at) "
+                    "VALUES(1, ?, ?, ?)",
+                    (owner_id, owner_host, now_iso),
+                )
+                return True
+            if row["owner_id"] == owner_id:
+                connection.execute(
+                    "UPDATE runner_lock SET renewed_at=?, owner_host=? WHERE id=1",
+                    (now_iso, owner_host or row["owner_host"]),
+                )
+                return True
+            if str(row["renewed_at"]) < cutoff:
+                connection.execute(
+                    "UPDATE runner_lock SET owner_id=?, owner_host=?, renewed_at=? "
+                    "WHERE id=1",
+                    (owner_id, owner_host, now_iso),
+                )
+                return True
+        return False
+
+    def release_ownership(self, owner_id: str, now: datetime | None = None) -> None:
+        now = now or utc_now()
+        with self.database.transaction() as connection:
+            connection.execute(
+                "DELETE FROM runner_lock WHERE id=1 AND owner_id=?",
+                (owner_id,),
+            )
+
+    def owner_info(self) -> dict[str, str] | None:
+        row = self.database.connection.execute(
+            "SELECT owner_id, owner_host, renewed_at FROM runner_lock WHERE id=1"
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "owner_id": str(row["owner_id"]),
+            "owner_host": str(row["owner_host"]),
+            "renewed_at": str(row["renewed_at"]),
+        }
 
     def mark_alert_delivered(
         self, alert_id: int, *, message_id: str | None, now: datetime

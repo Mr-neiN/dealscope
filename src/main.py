@@ -7,8 +7,10 @@ import json
 import logging
 import os
 import signal
+import socket
 import sys
 import threading
+import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -194,6 +196,14 @@ def _product_rows(config: AppConfig) -> list[dict[str, Any]]:
 
 # --------------------------------------------------------------------- commands
 def cmd_run(config: AppConfig, args: argparse.Namespace) -> int:
+    """Run the scheduler loop as the single owner of the scan schedule.
+
+    Multiple scanner containers must not search, value and alert in parallel:
+    the runner lease in SQLite gives the schedule to exactly one process. A
+    second instance refuses to start unless ALLOW_MULTIPLE_INSTANCES=true
+    (job locks still prevent two instances from ever running the same search).
+    """
+    allow_multi = _true_flag("ALLOW_MULTIPLE_INSTANCES", default="false")
     if not config.settings.shadow_mode and not config.settings.telegram_configured:
         raise ConfigError(
             "live alerts require TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, "
@@ -201,6 +211,29 @@ def cmd_run(config: AppConfig, args: argparse.Namespace) -> int:
         )
     runtime = build_runtime(config, require_ebay=True)
     try:
+        owner_id = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        if not runtime.repository.acquire_ownership(
+            owner_id, utc_now(), owner_host=socket.gethostname()
+        ):
+            info = runtime.repository.owner_info() or {}
+            if not allow_multi:
+                log.error(
+                    "another scanner instance owns the schedule "
+                    "(owner=%s renewed %s); refusing to start. Stop the "
+                    "other container or set ALLOW_MULTIPLE_INSTANCES=true.",
+                    info.get("owner_id"),
+                    info.get("renewed_at"),
+                    extra={"event": "instance_refused"},
+                )
+                raise ConfigError(
+                    "another scanner instance already owns the schedule; "
+                    "stop it first or set ALLOW_MULTIPLE_INSTANCES=true"
+                )
+            log.warning(
+                "running alongside instance %s anyway (ALLOW_MULTIPLE_INSTANCES)",
+                info.get("owner_id"),
+                extra={"event": "multi_instance"},
+            )
         assert runtime.scanner and runtime.quota
         profiles = build_profiles(config)
         plan = plan_schedule(profiles, config)
@@ -240,8 +273,25 @@ def cmd_run(config: AppConfig, args: argparse.Namespace) -> int:
                 extra={"event": "digest_skipped"},
             )
 
+        leases_schedule = False
+        if not allow_multi:
+            leases_schedule = runtime.repository.owner_info().get("owner_id") == owner_id
+
         while not stop.is_set():
             now = utc_now()
+            if leases_schedule:
+                try:
+                    if not runtime.repository.acquire_ownership(
+                        owner_id, now, owner_host=socket.gethostname()
+                    ):
+                        log.error(
+                            "runner lease lost; stopping so the schedule stays "
+                            "with exactly one scanner",
+                            extra={"event": "lease_lost"},
+                        )
+                        break
+                except Exception:
+                    log.exception("lease renewal failed", extra={"event": "lease_error"})
             try:
                 last_stats = scheduler.tick(now, max_jobs=8)
             except Exception:  # boundary: keep the service alive and visible
@@ -334,6 +384,11 @@ def cmd_run(config: AppConfig, args: argparse.Namespace) -> int:
             stop.wait(20)
 
         log.info("scanner stopped", extra={"event": "stopped"})
+        if leases_schedule:
+            try:
+                runtime.repository.release_ownership(owner_id)
+            except Exception:
+                log.exception("releasing the runner lease failed")
         _write_heartbeat(
             heartbeat_path,
             config=config,

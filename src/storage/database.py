@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -224,6 +224,18 @@ CREATE TABLE IF NOT EXISTS fx_rates (
     currency TEXT NOT NULL,
     rate_per_eur TEXT NOT NULL,
     PRIMARY KEY (day, currency)
+);
+
+-- Singleton row holding the id of the scanner process that currently owns
+-- the scan schedule. A second scanner instance must not run searches, quote
+-- the API budget or send digests in parallel; it refuses to start instead.
+-- The owner renews the lease each loop tick, so a crashed owner frees the
+-- lock once renewed_at becomes stale.
+CREATE TABLE IF NOT EXISTS runner_lock (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    owner_id TEXT NOT NULL,
+    owner_host TEXT NOT NULL DEFAULT '',
+    renewed_at TEXT NOT NULL
 );
 """
 

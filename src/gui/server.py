@@ -48,7 +48,7 @@ SORTS: Mapping[str, str] = {
     "ending": "l.item_end_at IS NULL, l.item_end_at ASC",
 }
 
-ALERT_STATES = ("pending", "delivered", "failed", "shadow")
+ALERT_STATES = ("pending", "sending", "delivered", "failed", "shadow")
 CONDITION_CLASSES = ("new", "used_working", "refurbished", "for_parts", "unknown")
 RISK_LEVELS = ("low", "medium", "high")
 BUYING_OPTIONS = ("fixed", "auction")
@@ -261,6 +261,7 @@ class DashboardStore:
             },
             "alerts": {
                 "pending": by_state.get("pending", 0),
+                "sending": by_state.get("sending", 0),
                 "delivered": by_state.get("delivered", 0),
                 "failed": by_state.get("failed", 0),
                 "shadow": by_state.get("shadow", 0),

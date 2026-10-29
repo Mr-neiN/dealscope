@@ -212,6 +212,30 @@ The database is a bind-mounted SQLite file at `data/scanner.db`. The service:
 Raw API responses are not archived indefinitely. Only the fields needed for
 discovery, risk, valuation, alerts and metrics are stored.
 
+## Scaling and multi-instance safety
+
+The design intent is one scanner process, but two containers sharing the
+same `data/` directory are **collision-safe**:
+
+- **Search jobs** cannot run twice in parallel: each run is gated by an
+  atomic `UPDATE ... WHERE` claim on `job_state` inside a SQLite immediate
+  transaction, so no two processes ever check the same search query.
+- **Alerts** cannot be sent twice: delivery first atomically moves rows from
+  `pending` to `sending` (single `UPDATE ... RETURNING` in a write
+  transaction); only the delivering process may complete them, a crashed
+  deliverer's rows are reclaimed after a 5-minute grace period (counted as
+  an attempt), and alert creation dedupes on a per-listing alert key.
+- **The schedule itself** is owned by one process through a `runner_lock`
+  lease (TTL 120s, renewed every loop tick). A second `run` instance refuses
+  to start until the first stops or its lease goes stale. Set
+  `ALLOW_MULTIPLE_INSTANCES=true` to run regardless; search/alert exclusivity
+  still holds, but the API budget, daily digest and shadow caps are split.
+
+SQLite WAL mode supports this access pattern comfortably at homelab scale
+(one writer, many readers). For a truly distributed deployment you would
+swap the SQLite + binds access layer for a server database — deliberately
+not needed for the stated one-instance goal.
+
 ## Docker details
 
 - Multi-stage image, non-root user `10001:10001`.
