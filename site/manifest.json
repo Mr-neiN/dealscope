@@ -1,0 +1,12 @@
+{
+    "entrypoint": "feed.js",
+    "compatibilityDate": "2026-10-01",
+    "modules": [
+        {
+            "name": "feed.js",
+            "type": "esm",
+            "path": "./feed.js"
+        }
+    ],
+    "assetsDirectory": "./public"
+}

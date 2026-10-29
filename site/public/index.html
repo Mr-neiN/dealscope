@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DealScope — hardware deals feed</title>
+<meta name="description" content="Live feed of underpriced PC hardware deals found on European eBay marketplaces by a local DealScope scanner.">
+<style>
+:root {
+  --bg: #12151c; --panel: #1a1f29; --border: #2c3444; --text: #d7dde8;
+  --muted: #8b96ab; --accent: #4f8ff7; --good: #3fb970; --warn: #d29922;
+  --chip: #262d3d;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--panel); }
+header h1 { font-size: 17px; margin: 0; }
+header .sub { color: var(--muted); font-size: 12px; }
+.spacer { flex: 1; }
+main { padding: 16px 18px; max-width: 1200px; margin: 0 auto; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.filters select, .filters input { background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+  font: inherit; }
+.meta { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
+.cards { display: grid; gap: 12px; grid-template-columns:
+  repeat(auto-fill, minmax(280px, 1fr)); }
+.card { background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.card .top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.card .product { font-weight: 600; font-size: 15px; }
+.badge { padding: 1px 8px; border-radius: 9px; font-size: 11px;
+  background: var(--chip); color: var(--muted); font-weight: 600; }
+.badge.score-high { background: #143425; color: #4bd37b; }
+.badge.score-mid { background: #3a2f12; color: #e3b341; }
+.card .title { color: var(--muted); font-size: 12.5px; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.card .price { font-size: 18px; font-weight: 600; }
+.card .price .total { color: var(--muted); font-size: 12.5px; font-weight: 400; }
+.card .value { color: var(--muted); font-size: 12.5px; }
+.card .value b { color: var(--good); }
+.card .foot { display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; margin-top: 4px; }
+.card .foot .when { color: var(--muted); font-size: 11.5px; }
+.empty { color: var(--muted); padding: 30px 0; text-align: center; }
+.error { color: #ff7b72; background: #3d1d1b; border: 1px solid #5c322e;
+  border-radius: 8px; padding: 10px 14px; }
+footer { color: var(--muted); font-size: 12px; padding: 20px 18px;
+  border-top: 1px solid var(--border); margin-top: 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DealScope feed</h1>
+  <span class="sub">underpriced PC hardware found on eBay</span>
+  <span class="spacer"></span>
+  <a href="https://github.com/Mr-neiN/dealscope">GitHub</a>
+</header>
+<main>
+  <div class="filters">
+    <select id="category"><option value="">Category: all</option></select>
+    <select id="marketplace"><option value="">Market: all</option></select>
+    <select id="limit">
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+    </select>
+  </div>
+  <div class="meta" id="meta">loading…</div>
+  <div class="cards" id="cards"></div>
+  <div class="empty" id="empty" hidden>No deals in the feed yet. The scanner pushes here once it starts publishing.</div>
+</main>
+<footer>
+  Curated by a self-hosted DealScope scanner; values are estimates, not
+  guarantees. Not affiliated with, endorsed by or sponsored by eBay.
+</footer>
+<script>
+function fmt(minor) {
+  if (minor == null) return "—";
+  const euro = Math.round(minor / 100);
+  return "€" + euro.toLocaleString("de-DE");
+}
+function age(iso) {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (!then) return "";
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 60) return mins + "m ago";
+  if (mins < 1440) return Math.round(mins / 60) + "h ago";
+  return Math.round(mins / 1440) + "d ago";
+}
+function scoreClass(score) {
+  if (score >= 80) return "score-high";
+  if (score >= 60) return "score-mid";
+  return "";
+}
+const state = { deals: [] };
+const CATEGORY_NAMES = { gpu: "GPU", cpu: "CPU", ram: "RAM", hdd: "HDD", ssd: "SSD", motherboard: "Motherboard", bundle: "Bundle" };
+const MARKET_NAMES = { EBAY_IT: "Italy", EBAY_DE: "Germany", EBAY_AT: "Austria", EBAY_GB: "UK", EBAY_US: "US", EBAY_PL: "Poland", EBAY_ES: "Spain", EBAY_FR: "France" };
+
+function label(name, map) { return map[name] || name; }
+
+function render() {
+  const category = document.getElementById("category").value;
+  const marketplace = document.getElementById("marketplace").value;
+  const limit = Number(document.getElementById("limit").value);
+  let rows = state.deals.filter(d =>
+    (!category || d.category === category) &&
+    (!marketplace || d.marketplace === marketplace));
+  rows = rows.slice(0, limit);
+
+  const cards = document.getElementById("cards");
+  const empty = document.getElementById("empty");
+  cards.innerHTML = "";
+  empty.hidden = rows.length > 0;
+  for (const d of rows) {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const top = document.createElement("div");
+    top.className = "top";
+    const product = document.createElement("span");
+    product.className = "product";
+    product.textContent = d.product_label || d.product_id || "Unknown";
+    const badge = document.createElement("span");
+    badge.className = "badge " + scoreClass(d.deal_score);
+    badge.textContent = label(d.marketplace, MARKET_NAMES);
+    const cond = document.createElement("span");
+    cond.className = "badge";
+    cond.textContent = d.condition_label || "";
+    top.append(product, badge, cond);
+    card.append(top);
+
+    const title = document.createElement("div");
+    title.className = "title";
+    title.textContent = d.title;
+    card.append(title);
+
+    const price = document.createElement("div");
+    price.className = "price";
+    price.append(fmt(d.price_eur));
+    const total = document.createElement("span");
+    total.className = "total";
+    total.textContent = "  ·  " + fmt(d.total_eur) + " total";
+    price.append(total);
+    card.append(price);
+
+    const value = document.createElement("div");
+    value.className = "value";
+    if (d.fair_value_eur) {
+      const b = document.createElement("b");
+      b.textContent = fmt(d.fair_value_eur);
+      value.append("fair value ", b);
+      if (d.discount_pct) value.append("  ·  -" + d.discount_pct + "%");
+    } else {
+      value.append("fair value unknown");
+    }
+    card.append(value);
+
+    const foot = document.createElement("div");
+    foot.className = "foot";
+    const when = document.createElement("span");
+    when.className = "when";
+    when.textContent = age(d.observed_at) || "";
+    if (d.ends_at) when.textContent += (" · auction: " + age(d.ends_at));
+    const link = document.createElement("a");
+    link.href = d.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Open on eBay";
+    foot.append(when, link);
+    card.append(foot);
+    cards.append(card);
+  }
+
+  const meta = document.getElementById("meta");
+  if (window.__feedMeta) {
+    meta.textContent = window.__feedMeta.count + " deals in feed · updated " +
+      (age(window.__feedMeta.updated_at) || "unknown");
+  }
+}
+
+function populate(selectId, values, map) {
+  const select = document.getElementById(selectId);
+  const selected = select.value;
+  for (const wrapper of [...select.querySelectorAll("option:not([value=''])")]) wrapper.remove();
+  for (const value of values) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label(value, map);
+    select.append(option);
+  }
+  select.value = selected;
+}
+
+async function load() {
+  const meta = document.getElementById("meta");
+  try {
+    const response = await fetch("/api/deals?limit=100", { cache: "no-store" });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const payload = await response.json();
+    window.__feedMeta = { count: payload.count, updated_at: payload.updated_at };
+    state.deals = Array.isArray(payload.deals) ? payload.deals : [];
+    populate("category", state.deals.map(d => d.category).filter(Boolean), CATEGORY_NAMES);
+    populate("marketplace", state.deals.map(d => d.marketplace).filter(Boolean), MARKET_NAMES);
+    render();
+  } catch (error) {
+    meta.innerHTML = "";
+    const box = document.createElement("div");
+    box.className = "error";
+    box.textContent = "Feed temporarily unavailable: " + error.message;
+    meta.append(box);
+  }
+}
+
+document.getElementById("category").addEventListener("change", render);
+document.getElementById("marketplace").addEventListener("change", render);
+document.getElementById("limit").addEventListener("change", render);
+load();
+setInterval(load, 120000);
+</script>
+</body>
+</html>

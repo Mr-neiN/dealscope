@@ -60,6 +60,8 @@ class Settings:
     health_max_age_seconds: int
     http_timeout_seconds: float
     http_max_attempts: int
+    feed_site_url: str | None = None
+    feed_publish_token: str | None = None
 
     @property
     def telegram_configured(self) -> bool:
@@ -443,6 +445,14 @@ def _load_settings(environment: Mapping[str, str], base: Path) -> Settings:
     daily_budget = _positive_int(daily_budget_raw, "DAILY_CALL_BUDGET") if daily_budget_raw else None
     config_dir = Path(get("CONFIG_DIR") or base / "config")
     database_path = Path(get("DATABASE_PATH") or base / "data" / "scanner.db")
+    # Optional hosted feed: set both to let `publish` push top deals to the
+    # public DealScope feed site (site/feed.js).
+    feed_site_url = (get("FEED_SITE_URL") or "").strip() or None
+    feed_publish_token = (get("FEED_PUBLISH_TOKEN") or "").strip() or None
+    if bool(feed_site_url) != bool(feed_publish_token):
+        raise ConfigError(
+            "FEED_SITE_URL and FEED_PUBLISH_TOKEN must be set together"
+        )
     # Any ISO-3166 alpha-2 code works; "IT" is only the historical default of
     # the reference setup (import-cost estimates derive their VAT rate from it).
     ship_to_country = (get("SHIP_TO_COUNTRY") or "IT").upper()
@@ -470,6 +480,8 @@ def _load_settings(environment: Mapping[str, str], base: Path) -> Settings:
             get("HTTP_TIMEOUT_SECONDS", "20"), "HTTP_TIMEOUT_SECONDS"
         ),
         http_max_attempts=_positive_int(get("HTTP_MAX_ATTEMPTS", "4"), "HTTP_MAX_ATTEMPTS"),
+        feed_site_url=feed_site_url,
+        feed_publish_token=feed_publish_token,
     )
 
 

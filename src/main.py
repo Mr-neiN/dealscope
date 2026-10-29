@@ -406,6 +406,42 @@ def cmd_run(config: AppConfig, args: argparse.Namespace) -> int:
         runtime.close()
 
 
+def cmd_publish(config: AppConfig, args: argparse.Namespace) -> int:
+    """Push the current top candidates to the hosted DealScope feed site."""
+    from src.gui.server import DashboardOptions, DashboardStore
+    from src.publishing.feed import PublishError, collect_candidates, publish_deals
+
+    settings = config.settings
+    if not settings.feed_site_url or not settings.feed_publish_token:
+        print(
+            "publish: FEED_SITE_URL and FEED_PUBLISH_TOKEN must both be set "
+            "in the environment to reach the hosted feed site"
+        )
+        return 2
+    store = DashboardStore(
+        DashboardOptions(
+            database_path=settings.database_path,
+            shadow_mode=settings.shadow_mode,
+        )
+    )
+    deals = collect_candidates(store, limit=args.limit)
+    if not deals:
+        print("publish: no current candidates; nothing pushed")
+        return 0
+    try:
+        result = publish_deals(
+            deals,
+            site_url=settings.feed_site_url,
+            token=settings.feed_publish_token,
+        )
+    except PublishError as exc:
+        log.error("publish failed: %s", exc, extra={"event": "publish_error"})
+        print(f"publish failed: {exc}")
+        return 1
+    print(f"published {result.pushed} deal(s) to {result.site_url}")
+    return 0
+
+
 def cmd_once(config: AppConfig, args: argparse.Namespace) -> int:
     runtime = build_runtime(config, require_ebay=True)
     try:
@@ -1161,6 +1197,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     notify = sub.add_parser("notify-test", help="send a Telegram test message")
     notify.set_defaults(func=cmd_notify_test)
+
+    feed = sub.add_parser(
+        "publish",
+        help="push current top deals to the hosted feed site",
+    )
+    feed.add_argument("--limit", type=int, default=50, help="max deals to push (<= 100)")
+    feed.set_defaults(func=cmd_publish)
 
     gui = sub.add_parser("gui", help="serve the local web dashboard")
     gui.add_argument("--host", default=os.environ.get("GUI_HOST", "127.0.0.1"))

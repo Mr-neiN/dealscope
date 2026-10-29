@@ -103,6 +103,26 @@ SHADOW_MODE=false
 
 Live mode refuses to start without a Telegram token and chat ID.
 
+## Optional: hosted public feed
+
+The scanner can publish its current top candidates to a public, read-only
+website so deals are browsable without the local dashboard. The site lives in
+`site/` (a Cloudflare Worker plus a D1 database: `site/feed.js`,
+`site/manifest.json`, `site/public/index.html`); the scanner pushes to it from
+`site/api/push` guarded by a bearer token (`PUSH_TOKEN` worker secret /
+`FEED_PUBLISH_TOKEN` locally).
+
+```bash
+# Set FEED_SITE_URL (the site base URL) and FEED_PUBLISH_TOKEN in .env first.
+docker compose run --rm dealscope-scanner publish          # push top 50
+docker compose run --rm dealscope-scanner publish --limit 100
+```
+
+The feed only carries listings that pass the operator's confirmation filters
+(active, valued, non-critical risk) and never contains credentials or any
+private data: titles, prices, product names and eBay links only. Pushed rows
+expire after 7 days. The public API is `GET /api/deals` and `GET /api/health`.
+
 ## Reference prices are placeholders
 
 `config/references.yaml` ships with illustrative numbers marked
