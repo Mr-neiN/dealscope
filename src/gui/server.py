@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from src.config import DECISIONS
 from src.gui.page import PAGE_HTML
-from src.gui.scanner_actions import ScanBusy
+from src.gui.scanner_actions import ScanBusy, ScanCooldown
 from src.storage.database import Database
 from src.storage.repository import Repository, utc_iso
 
@@ -299,6 +299,25 @@ class DashboardStore:
         )
         return {"items": [_dict_row(row) for row in rows]}
 
+    def alerts_since(self, since_iso: str, limit: int = 5) -> list[dict[str, Any]]:
+        """Alerts created at/after a timestamp — the deals a manual scan found.
+
+        Timestamps come from the same fixed-width UTC format everywhere, so a
+        lexical SQL comparison is safe. Candidate states include ``shadow``:
+        in shadow mode a candidate scan should still show what it found.
+        """
+        rows = self._query(
+            "SELECT a.id, a.kind, a.state, a.created_at, "
+            "l.item_id, l.title, l.url, l.total_cost_eur_minor, "
+            "l.savings_eur_minor, l.discount_pct "
+            "FROM alerts a LEFT JOIN listings l ON l.item_id = a.listing_id "
+            "WHERE a.created_at >= ? "
+            "AND a.state IN ('pending', 'delivered', 'shadow') "
+            "ORDER BY a.priority DESC, a.created_at ASC LIMIT ?",
+            (str(since_iso), int(limit)),
+        )
+        return [_dict_row(row) for row in rows]
+
     def record_decision(
         self, item_id: str, decision: str, reason: str | None = None
     ) -> dict[str, Any]:
@@ -463,9 +482,16 @@ class GuiHandler(BaseHTTPRequestHandler):
                 if self.scan_runner is None:
                     self._send_json({"error": "manual scans are not enabled here"}, status=503)
                     return
+                scan_status = self.scan_runner.status()
+                candidates: list[dict[str, Any]] = []
+                if scan_status.get("started_at") and not scan_status.get("running"):
+                    candidates = self.store.alerts_since(
+                        str(scan_status["started_at"]), limit=5
+                    )
                 self._send_json(
                     {
-                        "scan": self.scan_runner.status(),
+                        "scan": scan_status,
+                        "candidates": candidates,
                         "recent_runs": self.store.recent_runs(30),
                     }
                 )
@@ -520,6 +546,12 @@ class GuiHandler(BaseHTTPRequestHandler):
                     )
                 except ScanBusy as exc:
                     self._send_json({"error": str(exc)}, status=409)
+                    return
+                except ScanCooldown as exc:
+                    self._send_json(
+                        {"error": str(exc), "retry_after": exc.seconds_left},
+                        status=409,
+                    )
                     return
                 except ValueError as exc:
                     raise BadRequest(str(exc)) from exc

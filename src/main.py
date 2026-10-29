@@ -964,7 +964,12 @@ def cmd_gui(config: AppConfig, args: argparse.Namespace) -> int:
                 daily_budget=config.effective_daily_budget,
             ),
             watchdog=watchdog,
-            scan_runner=ScanRunner(config),
+            scan_runner=ScanRunner(
+                config,
+                cooldown_seconds=_env_clamped_int(
+                    "SCAN_COOLDOWN_SECONDS", 120, lo=0, hi=3600
+                ),
+            ),
         )
     except Exception:
         log.exception("dashboard setup failed")

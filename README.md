@@ -302,6 +302,13 @@ The Scanner tab does not only read — it can trigger eBay searches:
   without waiting for a real deal.
 - **Result feedback:** per-profile outcomes (items, new, duration, errors) and
   the combined search history of the scheduler and manual scans.
+- **Deal candidates:** the alerts a manual scan just created are listed inline
+  under the run results, so you see what it found without opening the Listings
+  tab.
+- **Scan cooldown:** a finished manual scan holds others back for
+  `SCAN_COOLDOWN_SECONDS` (default 120, settable 0–3600) so repeated clicks or
+  a refresh loop cannot silently drain the day's API budget. A blocked request
+  returns the remaining wait and the dashboard shows the countdown.
 
 A manual scan is deliberately collision-safe with the always-running
 scheduler: it takes the same persisted job claims (a search the scheduler is

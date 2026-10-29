@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from src.discovery.queries import SearchOutcome, SearchProfile, build_profiles
 from src.ebay.quota import QuotaExceeded
+from src.storage.repository import utc_iso
 
 if TYPE_CHECKING:  # the Runtime lives in main, which imports this lazily
     from src.main import Runtime
@@ -33,6 +34,10 @@ if TYPE_CHECKING:  # the Runtime lives in main, which imports this lazily
 log = logging.getLogger(__name__)
 
 JOB_LOCK_SECONDS = 900
+
+# A finished manual scan holds other scans back for a while so repeated
+# clicks (or a refresh loop) cannot silently burn the day's API budget.
+DEFAULT_COOLDOWN_SECONDS = 120
 
 SCAN_KINDS = (
     "new_listings",
@@ -49,6 +54,14 @@ DEFAULT_PROFILES_PER_SCAN = 8
 
 class ScanBusy(RuntimeError):
     """A scan is already in progress in this dashboard process."""
+
+
+class ScanCooldown(RuntimeError):
+    """A scan finished too recently; the cooldown is still counting down."""
+
+    def __init__(self, seconds_left: int) -> None:
+        super().__init__(f"scan cooldown active; try again in {seconds_left}s")
+        self.seconds_left = seconds_left
 
 
 @dataclass
@@ -74,7 +87,9 @@ class ScanState:
 
 
 def _utc_iso(moment: datetime) -> str:
-    return moment.astimezone(timezone.utc).isoformat(timespec="seconds")
+    # Same fixed-width format the repository writes into created_at columns so
+    # SQL comparisons between scan timestamps and alert timestamps are safe.
+    return utc_iso(moment)
 
 
 class ScanRunner:
@@ -85,20 +100,26 @@ class ScanRunner:
         config: Any,
         *,
         runtime_factory: Callable[[Any], "Runtime"] | None = None,
+        cooldown_seconds: int = DEFAULT_COOLDOWN_SECONDS,
     ) -> None:
         # ``config`` is the loaded AppConfig; a None value defers loading to
         # the first trigger so an invalid .env does not break dashboard boot.
         self._config = config
         self._runtime_factory = runtime_factory or _default_runtime_factory
+        self._cooldown = max(0, int(cooldown_seconds))
         self._lock = threading.Lock()
         self._state = ScanState()
 
     # ------------------------------------------------------------------ API
     def status(self) -> dict[str, Any]:
         with self._lock:
-            return self._state.as_dict()
+            payload = self._state.as_dict()
+            payload["cooldown_seconds_left"] = self._cooldown_left_locked()
+            return payload
 
-    def trigger(self, kind: str, product_id: str | None = None, limit: int = DEFAULT_PROFILES_PER_SCAN) -> dict[str, Any]:
+    def trigger(
+        self, kind: str, product_id: str | None = None, limit: int = DEFAULT_PROFILES_PER_SCAN
+    ) -> dict[str, Any]:
         if kind not in SCAN_KINDS:
             raise ValueError(
                 f"unknown scan kind {kind!r}; expected one of {', '.join(SCAN_KINDS)}"
@@ -111,6 +132,9 @@ class ScanRunner:
         with self._lock:
             if self._state.running:
                 raise ScanBusy("a scan is already running; wait for it to finish")
+            seconds_left = self._cooldown_left_locked()
+            if seconds_left > 0:
+                raise ScanCooldown(seconds_left)
             self._state = ScanState(running=True, started_at=_utc_iso(_utc_now()))
             self._state.requested = {"kind": kind, "product_id": product_id, "limit": limit}
         thread = threading.Thread(target=self._run, args=(kind, product_id, limit), name="gui-manual-scan", daemon=True)
@@ -139,6 +163,18 @@ class ScanRunner:
         return {"ok": True, "delivered": True}
 
     # ---------------------------------------------------------------- internals
+    def _cooldown_left_locked(self) -> int:
+        if not self._cooldown or self._state.running or not self._state.finished_at:
+            return 0
+        try:
+            finished = datetime.fromisoformat(
+                self._state.finished_at.replace("Z", "+00:00")
+            )
+        except ValueError:
+            return 0
+        elapsed = (_utc_now() - finished).total_seconds()
+        return max(0, self._cooldown - int(elapsed))
+
     def _build_runtime(self) -> "Runtime":
         if self._config is None:
             from src.config import load_config

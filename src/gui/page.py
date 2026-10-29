@@ -260,6 +260,31 @@ td .meta { color: var(--muted); font-size: 12px; }
   }
 
   // ------------------------------------------------------------------ stats
+  const BASE_TITLE = document.title.replace(/^\(\d+\)\s*/, "") || "Dashboard";
+  function setUnreadBadge(n) {
+    document.title = n > 0 ? `(${n}) ${BASE_TITLE}` : BASE_TITLE;
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#202634";
+    ctx.beginPath(); ctx.arc(32, 32, 32, 0, Math.PI * 2); ctx.fill();
+    if (n > 0) {
+      ctx.fillStyle = "#e5534b";
+      ctx.beginPath(); ctx.arc(32, 32, 32, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 40px system-ui, sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(n > 99 ? "+" : String(n), 32, 34);
+    }
+    let link = document.querySelector("link[rel='icon']");
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      document.head.appendChild(link);
+    }
+    link.href = canvas.toDataURL("image/png");
+  }
+
   function renderCards(s) {
     const mode = s.shadow_mode
       ? '<span class="badge shadow">SHADOW MODE — no live alerts</span>'
@@ -292,6 +317,8 @@ td .meta { color: var(--muted); font-size: 12px; }
       `<div class="card"><div class="k">${c.k}</div><div class="v">${c.v}</div>
        <div class="s">${c.s}</div>${c.meter != null ? `<div class="meter"><i style="width:${c.meter}%"></i></div>` : ""}</div>`).join("");
     $("updated").textContent = "updated " + new Date(s.generated_at).toLocaleTimeString();
+    // Unread = waiting or in-delivery alerts; delivered/shadowed count nowhere.
+    setUnreadBadge((s.alerts.pending || 0) + (s.alerts.sending || 0));
   }
 
   // --------------------------------------------------------------- listings
@@ -471,8 +498,9 @@ td .meta { color: var(--muted); font-size: 12px; }
     const data = await api("/api/scan");
     const st = data.scan || {};
     const running = !!st.running;
+    const cool = st.cooldown_seconds_left || 0;
     const runBtn = $("scan-run"), notifyBtn = $("scan-notify");
-    if (runBtn) runBtn.disabled = running;
+    if (runBtn) runBtn.disabled = running || cool > 0;
     if (notifyBtn) notifyBtn.disabled = running;
 
     let statusHtml = "";
@@ -490,9 +518,30 @@ td .meta { color: var(--muted); font-size: 12px; }
         <div class="s">${when(st.started_at)} → ${when(st.finished_at)}${st.error ? " · " + esc(st.error) : ""}
         ${scanSummaryLine(st) ? "<br>" + esc(scanSummaryLine(st)) : ""}</div></div>`;
       $("scan-status").textContent = st.error ? "last scan failed" : "last scan finished";
+      if (cool > 0) {
+        $("scan-status").textContent = `cooldown ${cool}s — throttle between scans to protect the API budget`;
+        if (scanTimer) clearTimeout(scanTimer);
+        scanTimer = setTimeout(loadScan, 2000);
+      }
     } else {
       statusHtml = `<div class="card"><div class="k">Manual scan</div><div class="v">ready</div>
-        <div class="s">pick a kind above and click “Run scan now”. The scan reuses the scanner's job locks and API budget, so it is safe to use while the scheduler is running.</div></div>`;
+        <div class="s">pick a kind above and click “Run scan now”. The scan reuses the scanner's job locks and API budget, so it is safe to use while the scheduler is running. A short cooldown applies between scans.</div></div>`;
+    }
+
+    let candidatesHtml = "";
+    const cands = data.candidates || [];
+    if (cands.length) {
+      const rows = cands.map(c => `<tr>
+        <td class="muted" style="white-space:nowrap">${esc(c.state)} · ${when(c.created_at)}</td>
+        <td class="trunc">${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noreferrer" onclick="event.stopPropagation()">${esc(c.title || c.item_id)}</a>` : `<span class="muted">${esc(c.title || c.item_id || "(listing pruned)")}</span>`}</td>
+        <td>${esc(c.kind)}</td>
+        <td class="num">${fmtPct(c.discount_pct)}</td>
+        <td class="num good">${euro(c.savings_eur_minor)}</td>
+        <td class="num">${euro(c.total_cost_eur_minor)}</td>
+      </tr>`).join("");
+      candidatesHtml = `<b>New deal candidates from this scan</b><table><thead><tr><th>When</th><th>Listing</th><th>Kind</th>
+        <th class="num">Disc</th><th class="num">Save</th><th class="num">Total</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
     }
 
     let resultsHtml = "";
@@ -502,7 +551,8 @@ td .meta { color: var(--muted); font-size: 12px; }
         <tbody>${scanResultRows(st.profile_results)}</tbody></table>`;
     }
 
-    const rows = (data.recent_runs || []).items.map(r => {
+    const runsData = data.recent_runs || {items: []};
+    const rows = runsData.items.map(r => {
       const dur = r.started_at && r.finished_at
         ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + "s" : "";
       return `<tr>
@@ -522,7 +572,7 @@ td .meta { color: var(--muted); font-size: 12px; }
         <tbody>${rows}</tbody></table>`
       : '<div class="card empty">No searches recorded yet.</div>';
 
-    $("view").innerHTML = statusHtml + resultsHtml + historyHtml;
+    $("view").innerHTML = statusHtml + candidatesHtml + resultsHtml + historyHtml;
   }
 
   async function runScanNow() {

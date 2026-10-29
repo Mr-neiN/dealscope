@@ -128,7 +128,7 @@ def scan_server(scan_db, monkeypatch):
     repository = StubRepository()
     runtime = _stub_runtime(repository)
     runner = ScanRunner(
-        SimpleNamespace(), runtime_factory=lambda config: runtime
+        SimpleNamespace(), runtime_factory=lambda config: runtime, cooldown_seconds=0
     )
     # The real profile builder needs a fully loaded AppConfig; stub it so the
     # scan selection logic itself stays under test.
@@ -347,3 +347,108 @@ def test_scan_routes_503_without_scan_runner(scan_db):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def _mount(database, runner: ScanRunner) -> tuple[str, ThreadingHTTPServer]:
+    options = DashboardOptions(
+        database_path=Path(database.path),
+        shadow_mode=False,
+        heartbeat_path=None,
+        daily_budget=4000,
+    )
+    httpd = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        make_handler(DashboardStore(options), scan_runner=runner),
+    )
+    port = httpd.server_address[1]
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    time.sleep(0.05)
+    return f"http://127.0.0.1:{port}", httpd
+
+
+def test_scan_cooldown_blocks_immediate_rescan(scan_db):
+    """After a finished scan, an immediate rescan gets a 409 cooldown."""
+    repository = StubRepository()
+    runtime = _stub_runtime(repository)
+    runner = ScanRunner(
+        SimpleNamespace(),
+        runtime_factory=lambda config: runtime,
+        cooldown_seconds=600,
+    )
+    base, httpd = _mount(scan_db, runner)
+    holder = SimpleNamespace(
+        base=base, runner=runner, repository=repository, runtime=runtime
+    )
+    try:
+        first = httpx.post(f"{base}/api/scan", json={"kind": "new_listings"}, timeout=5)
+        assert first.status_code == 200
+        _wait_finished(holder)
+
+        second = httpx.post(f"{base}/api/scan", json={"kind": "new_listings"}, timeout=5)
+        assert second.status_code == 409
+        body = second.json()
+        assert "cooldown" in body["error"]
+        assert 0 < body["retry_after"] <= 600
+
+        status = httpx.get(f"{base}/api/scan", timeout=5).json()
+        assert status["scan"]["cooldown_seconds_left"] > 0
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_scan_cooldown_expires(scan_server):
+    """The fixture's cooldown of 0 lets rescans go through immediately."""
+    for kind in ("new_listings", "variant"):
+        response = httpx.post(
+            f"{scan_server.base}/api/scan", json={"kind": kind}, timeout=5
+        )
+        assert response.status_code == 200
+        _wait_finished(scan_server)
+
+
+def test_scan_candidates_show_alerts_created_by_scan(scan_server, scan_db):
+    """Alerts created at/after the scan start come back as candidates."""
+    started = scan_server.runner.status()["started_at"]
+    assert started is None
+
+    # Run a scan (creates no alerts by itself: the stub scraper does not write)
+    response = httpx.post(f"{scan_server.base}/api/scan", json={"kind": "new_listings"}, timeout=5)
+    assert response.status_code == 200
+    _wait_finished(scan_server)
+    started = scan_server.runner.status()["started_at"]
+    assert started
+
+    with scan_db.transaction() as connection:
+        connection.execute(
+            """INSERT INTO listings(item_id, marketplace, title, normalized_title,
+                url, first_seen_at, last_seen_at, product_id, discount_pct,
+                savings_eur_minor, total_cost_eur_minor)
+               VALUES('IT-DEAL', 'EBAY_IT', 'Auction lot 3090', 'auction lot 3090',
+                'https://www.ebay.it/itm/IT-DEAL', :t, :t, 'rtx_3090', 30.0,
+                12000, 30000)""",
+            {"t": started},
+        )
+        connection.execute(
+            """INSERT INTO alerts(listing_id, kind, alert_key, state, priority,
+                payload_json, created_at, updated_at)
+               VALUES('IT-DEAL', 'new_deal', 'IT-DEAL:new_deal:v1', 'pending', 3,
+                '{}', :t, :t)""",
+            {"t": started},
+        )
+        # Failed attempts are not candidates, they never got delivered.
+        connection.execute(
+            """INSERT INTO alerts(listing_id, kind, alert_key, state, priority,
+                payload_json, created_at, updated_at)
+               VALUES('IT-DEAL', 'new_deal', 'IT-DEAL:new_deal:v2', 'failed', 3,
+                '{}', :t, :t)""",
+            {"t": started},
+        )
+
+    body = httpx.get(f"{scan_server.base}/api/scan", timeout=5).json()
+    candidates = body["candidates"]
+    assert len(candidates) == 1
+    assert candidates[0]["item_id"] == "IT-DEAL"
+    assert candidates[0]["state"] == "pending"
+    assert candidates[0]["savings_eur_minor"] == 12000
