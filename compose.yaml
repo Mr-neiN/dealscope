@@ -49,6 +49,8 @@ services:
   # volume with the scanner: SQLite WAL mode allows one writer (the scanner)
   # and many readers (the dashboard) concurrently. Bound to loopback by
   # default; set GUI_BIND=0.0.0.0 on the homelab to reach it from your LAN.
+  # Manual scans triggered from the dashboard need outbound HTTPS to eBay
+  # and Telegram; the default bridge network already allows that.
   gui:
     build:
       context: .

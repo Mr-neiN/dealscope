@@ -8,8 +8,10 @@ Design notes:
   queries). This keeps the dashboard safe under ``ThreadingHTTPServer`` and
   lets it run in a separate container sharing the ``./data`` volume: SQLite
   WAL mode supports many concurrent readers.
-- The only write endpoint is the manual decision record, which reuses
-  ``Repository.record_decision`` exactly like the CLI does.
+- The write endpoints are the manual decision record (reusing
+  ``Repository.record_decision`` exactly like the CLI does) and the manual
+  scan/Telegram-test endpoints in :mod:`src.gui.scanner_actions`, which
+  reuse the scanner's job claims and API budget ledger.
 - Listing text comes from eBay; responses always escape it client-side by
   inserting it via ``textContent``/``document.createElement``, never HTML.
 """
@@ -30,6 +32,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from src.config import DECISIONS
 from src.gui.page import PAGE_HTML
+from src.gui.scanner_actions import ScanBusy
 from src.storage.database import Database
 from src.storage.repository import Repository, utc_iso
 
@@ -285,6 +288,17 @@ class DashboardStore:
             categories[item["category"]] = categories.get(item["category"], 0) + 1
         return {"items": items, "categories": sorted(categories)}
 
+    def recent_runs(self, limit: int = 30) -> dict[str, Any]:
+        """Recent scheduled searches, so scans run anywhere stay visible."""
+        rows = self._query(
+            "SELECT id, job_key, strategy, query, marketplace, product_id, "
+            "started_at, finished_at, outcome, http_status, items_returned, "
+            "new_items, pages, error FROM search_runs "
+            "ORDER BY started_at DESC LIMIT ?",
+            (int(limit),),
+        )
+        return {"items": [_dict_row(row) for row in rows]}
+
     def record_decision(
         self, item_id: str, decision: str, reason: str | None = None
     ) -> dict[str, Any]:
@@ -389,6 +403,7 @@ class GuiHandler(BaseHTTPRequestHandler):
     """HTTP handler bound to a :class:`DashboardStore` via ``store``."""
 
     store: DashboardStore
+    scan_runner: Any = None
     protocol_version = "HTTP/1.1"
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
@@ -410,6 +425,21 @@ class GuiHandler(BaseHTTPRequestHandler):
             for key, values in parse_qs(parsed.query, keep_blank_values=True).items()
         }
 
+    def _read_json_body(self) -> dict[str, Any]:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise BadRequest("invalid Content-Length") from exc
+        if length <= 0 or length > 100_000:
+            raise BadRequest("request body is missing or too large")
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise BadRequest("request body is not valid JSON") from exc
+        if not isinstance(payload, dict):
+            raise BadRequest("request body must be a JSON object")
+        return payload
+
     def do_GET(self) -> None:  # noqa: N802
         try:
             split = urlsplit(self.path)
@@ -429,6 +459,16 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._send_json(self.store.listings(self._read_query()))
             elif split.path == "/api/alerts":
                 self._send_json(self.store.alerts(self._read_query()))
+            elif split.path == "/api/scan":
+                if self.scan_runner is None:
+                    self._send_json({"error": "manual scans are not enabled here"}, status=503)
+                    return
+                self._send_json(
+                    {
+                        "scan": self.scan_runner.status(),
+                        "recent_runs": self.store.recent_runs(30),
+                    }
+                )
             else:
                 self._send_json({"error": "not found"}, status=404)
         except BadRequest as exc:
@@ -450,26 +490,47 @@ class GuiHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
-            if urlsplit(self.path).path != "/api/decision":
+            path = urlsplit(self.path).path
+            if path not in ("/api/decision", "/api/scan", "/api/scan/notify-test"):
                 self._send_json({"error": "not found"}, status=404)
                 return
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError as exc:
-                raise BadRequest("invalid Content-Length") from exc
-            if length <= 0 or length > 100_000:
-                raise BadRequest("request body is missing or too large")
-            try:
-                payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            except (ValueError, UnicodeDecodeError) as exc:
-                raise BadRequest("request body is not valid JSON") from exc
-            if not isinstance(payload, dict):
-                raise BadRequest("request body must be a JSON object")
-            result = self.store.record_decision(
-                str(payload.get("item_id", "")),
-                str(payload.get("decision", "")),
-                payload.get("reason"),
-            )
+            payload = self._read_json_body()
+            if path == "/api/decision":
+                result = self.store.record_decision(
+                    str(payload.get("item_id", "")),
+                    str(payload.get("decision", "")),
+                    payload.get("reason"),
+                )
+            elif path == "/api/scan":
+                if self.scan_runner is None:
+                    self._send_json(
+                        {"error": "manual scans are not enabled in this process"},
+                        status=503,
+                    )
+                    return
+                try:
+                    limit = int(payload.get("limit", 8))
+                except (TypeError, ValueError) as exc:
+                    raise BadRequest("limit must be an integer") from exc
+                try:
+                    result = self.scan_runner.trigger(
+                        str(payload.get("kind", "new_listings") or "new_listings"),
+                        payload.get("product_id"),
+                        limit,
+                    )
+                except ScanBusy as exc:
+                    self._send_json({"error": str(exc)}, status=409)
+                    return
+                except ValueError as exc:
+                    raise BadRequest(str(exc)) from exc
+            else:  # /api/scan/notify-test
+                if self.scan_runner is None:
+                    self._send_json(
+                        {"error": "notification tests are not enabled in this process"},
+                        status=503,
+                    )
+                    return
+                result = self.scan_runner.test_notify()
             self._send_json(result)
         except BadRequest as exc:
             self._send_json({"error": str(exc)}, status=400)
@@ -478,22 +539,32 @@ class GuiHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "internal error"}, status=500)
 
 
-def make_handler(store: DashboardStore) -> type[GuiHandler]:
+def make_handler(
+    store: DashboardStore, scan_runner: Any = None
+) -> type[GuiHandler]:
     class BoundHandler(GuiHandler):
         bound_store = store
 
     BoundHandler.store = store
+    BoundHandler.scan_runner = scan_runner
     return BoundHandler
 
 
 class GuiServer:
-    def __init__(self, options: DashboardOptions, *, watchdog: Any = None) -> None:
+    def __init__(
+        self,
+        options: DashboardOptions,
+        *,
+        watchdog: Any = None,
+        scan_runner: Any = None,
+    ) -> None:
         self.options = options
         self.store = DashboardStore(options)
         self.watchdog = watchdog
+        self.scan_runner = scan_runner
 
     def serve_forever(self, host: str, port: int) -> None:
-        httpd = ThreadingHTTPServer((host, port), make_handler(self.store))
+        httpd = ThreadingHTTPServer((host, port), make_handler(self.store, self.scan_runner))
         thread = None
         if self.watchdog is not None:
             self.watchdog.stop.clear()

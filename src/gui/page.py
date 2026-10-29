@@ -123,6 +123,23 @@ td .meta { color: var(--muted); font-size: 12px; }
 <div class="tabs">
   <button data-tab="listings" class="on">Listings</button>
   <button data-tab="alerts">Alerts</button>
+  <button data-tab="scan">Scanner</button>
+</div>
+
+<div class="filters" id="f-scan" style="display:none">
+  <select id="scan-kind">
+    <option value="new_listings">New listings — exact models</option>
+    <option value="auctions">Auctions ending soon</option>
+    <option value="variant">Variant / misspelling searches</option>
+    <option value="bundle">Bundles &amp; lots</option>
+    <option value="discovery">Broad discovery searches</option>
+    <option value="product">One product — all strategies</option>
+  </select>
+  <select id="scan-product" style="display:none"><option value="">Product…</option></select>
+  <label>Profiles <input type="number" id="scan-limit" min="1" max="25" value="8" style="width:52px"></label>
+  <button id="scan-run">Run scan now</button>
+  <button id="scan-notify">Test Telegram</button>
+  <span id="scan-status" class="muted"></span>
 </div>
 
 <div class="filters" id="f-listings">
@@ -209,7 +226,7 @@ td .meta { color: var(--muted); font-size: 12px; }
   const PARAMS = ["q","product","category","marketplace","condition","buying_option","status","risk",
     "ship","min_discount","min_savings_eur","min_score","max_total_eur","ending","deals_only",
     "has_alert","sort","limit"];
-  let offset = 0, tab = "listings", expanded = null, searchTimer = null, alertsState = "";
+  let offset = 0, tab = "listings", expanded = null, searchTimer = null, alertsState = "", scanTimer = null;
 
   const esc = s => (s == null ? "" : String(s).replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])));
@@ -414,18 +431,139 @@ td .meta { color: var(--muted); font-size: 12px; }
       const data = await api("/api/products");
       $("product").innerHTML = '<option value="">Product: all</option>' +
         data.items.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+      $("scan-product").innerHTML = '<option value="">Product…</option>' +
+        data.items.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
       $("category").innerHTML = '<option value="">Category: all</option>' +
         data.categories.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
     } catch (exc) { /* dashboard still works without the catalogue */ }
   }
 
+  // ------------------------------------------------------------- scanner
+  function scanSummaryLine(st) {
+    const sum = st.summary || {};
+    const bits = [];
+    if (sum.succeeded != null) bits.push(`${sum.succeeded} ok`);
+    if (sum.failed) bits.push(`${sum.failed} failed`);
+    if (sum.busy) bits.push(`${sum.busy} busy`);
+    if (sum.skipped_budget) bits.push(`${sum.skipped_budget} over budget`);
+    if (sum.stopped) bits.push(`stopped: ${sum.stopped}`);
+    const a = sum.alerts;
+    if (a) bits.push(`alerts ${a.delivered} delivered / ${a.failed} failed${a.retried_later ? " / " + a.retried_later + " retry" : ""}`);
+    if (sum.quota_remaining != null) bits.push(`${sum.quota_remaining} API calls left today`);
+    return bits.join(" · ");
+  }
+
+  function scanResultRows(results) {
+    return results.map(r => `<tr>
+      <td class="muted" style="white-space:nowrap">${esc(r.strategy)}</td>
+      <td>${esc(r.marketplace)}</td>
+      <td class="trunc">${esc(r.query)}</td>
+      <td><span class="${r.outcome === "ok" ? "good" : r.outcome === "error" || r.outcome === "internal_error" ? "bad" : "warn"}">${esc(r.outcome)}</span></td>
+      <td class="num">${r.items ?? 0}</td>
+      <td class="num">${r.new ?? 0}</td>
+      <td class="num">${r.duration_s != null ? r.duration_s + "s" : "—"}</td>
+      <td class="trunc meta warn">${esc(r.error || "")}</td>
+    </tr>`).join("");
+  }
+
+  async function loadScan() {
+    if (tab !== "scan") return;
+    const data = await api("/api/scan");
+    const st = data.scan || {};
+    const running = !!st.running;
+    const runBtn = $("scan-run"), notifyBtn = $("scan-notify");
+    if (runBtn) runBtn.disabled = running;
+    if (notifyBtn) notifyBtn.disabled = running;
+
+    let statusHtml = "";
+    if (running) {
+      statusHtml = `<div class="card"><div class="k">Scan in progress</div>
+        <div class="v">started ${when(st.started_at)}</div>
+        <div class="s">running ${esc(JSON.stringify(st.requested || {}))} — results appear here when it finishes</div></div>`;
+      $("scan-status").textContent = "scan running…";
+      if (scanTimer) clearTimeout(scanTimer);
+      scanTimer = setTimeout(loadScan, 2000);
+    } else if (st.started_at) {
+      const cls = st.error ? "bad" : "good";
+      statusHtml = `<div class="card"><div class="k">Last manual scan</div>
+        <div class="v ${cls}">${st.error ? "failed" : "finished"}</div>
+        <div class="s">${when(st.started_at)} → ${when(st.finished_at)}${st.error ? " · " + esc(st.error) : ""}
+        ${scanSummaryLine(st) ? "<br>" + esc(scanSummaryLine(st)) : ""}</div></div>`;
+      $("scan-status").textContent = st.error ? "last scan failed" : "last scan finished";
+    } else {
+      statusHtml = `<div class="card"><div class="k">Manual scan</div><div class="v">ready</div>
+        <div class="s">pick a kind above and click “Run scan now”. The scan reuses the scanner's job locks and API budget, so it is safe to use while the scheduler is running.</div></div>`;
+    }
+
+    let resultsHtml = "";
+    if ((st.profile_results || []).length) {
+      resultsHtml = `<table><thead><tr><th>Strategy</th><th>Market</th><th>Query</th><th>Outcome</th>
+        <th class="num">Items</th><th class="num">New</th><th class="num">Took</th><th>Error</th></tr></thead>
+        <tbody>${scanResultRows(st.profile_results)}</tbody></table>`;
+    }
+
+    const rows = (data.recent_runs || []).items.map(r => {
+      const dur = r.started_at && r.finished_at
+        ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + "s" : "";
+      return `<tr>
+        <td class="muted" style="white-space:nowrap">${when(r.started_at)}</td>
+        <td class="muted" style="white-space:nowrap">${esc(r.job_key || "")}</td>
+        <td class="trunc">${esc(r.marketplace ? r.marketplace + " “" + r.query + "”" : r.query)}${r.pages ? `<div class="meta">${r.pages} page(s)</div>` : ""}</td>
+        <td><span class="${r.outcome === "ok" ? "good" : ["api_error","auth_error","internal_error"].includes(r.outcome) ? "bad" : "warn"}">${esc(r.outcome || "?")}</span></td>
+        <td class="num">${r.items_returned ?? r.items ?? 0}</td>
+        <td class="num">${r.new_items ?? r.new ?? 0}</td>
+        <td class="num">${dur}</td>
+        <td class="trunc meta warn">${esc(r.error || "")}</td>
+      </tr>`;
+    }).join("");
+    const historyHtml = rows
+      ? `<b>Recent searches (scheduled + manual)</b><table><thead><tr><th>When</th><th>Job</th><th>Query</th><th>Outcome</th>
+        <th class="num">Items</th><th class="num">New</th><th class="num">Took</th><th>Error</th></tr></thead>
+        <tbody>${rows}</tbody></table>`
+      : '<div class="card empty">No searches recorded yet.</div>';
+
+    $("view").innerHTML = statusHtml + resultsHtml + historyHtml;
+  }
+
+  async function runScanNow() {
+    const kind = $("scan-kind").value;
+    const body = {kind, limit: Number($("scan-limit").value || 8)};
+    if (kind === "product") {
+      body.product_id = $("scan-product").value;
+      if (!body.product_id) { flash("pick a product first"); return; }
+    }
+    try {
+      await api("/api/scan", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body)});
+      $("scan-status").textContent = "scan started";
+      loadScan().catch(e => flash(e.message));
+    } catch (exc) { flash("scan failed to start: " + exc.message); }
+  }
+
+  async function runNotifyTest() {
+    const btn = $("scan-notify"); btn.disabled = true;
+    try { await api("/api/scan/notify-test", {method: "POST", body: "{}",
+      headers: {"Content-Type": "application/json"}});
+      flash("Telegram test sent — check your chat");
+    } catch (exc) { flash("Telegram test failed: " + exc.message); }
+    finally { btn.disabled = false; }
+  }
+
+  $("scan-kind").addEventListener("change", () => {
+    $("scan-product").style.display = $("scan-kind").value === "product" ? "" : "none";
+  });
+  $("scan-run").addEventListener("click", runScanNow);
+  $("scan-notify").addEventListener("click", runNotifyTest);
+
   function switchView(t) {
     tab = t; expanded = null; offset = 0;
     $("f-listings").style.display = t === "listings" ? "" : "none";
+    $("f-scan").style.display = t === "scan" ? "" : "none";
     $("pager").style.display = t === "listings" ? "" : "none";
     document.querySelectorAll(".tabs button").forEach(b =>
       b.classList.toggle("on", b.dataset.tab === t));
-    (t === "listings" ? loadListings : loadAlerts)().catch(exc => flash(exc.message));
+    const load = {listings: loadListings, alerts: loadAlerts, scan: loadScan}[t];
+    (load || loadListings)().catch(exc => flash(exc.message));
   }
 
   function scheduleListings() {
@@ -473,7 +611,9 @@ td .meta { color: var(--muted); font-size: 12px; }
     loadListings().catch(e => flash(e.message));
   });
   $("refresh").addEventListener("click", () => {
-    loadStats(); (tab === "listings" ? loadListings : loadAlerts)().catch(e => flash(e.message));
+    loadStats();
+    const load = {listings: loadListings, alerts: loadAlerts, scan: loadScan}[tab];
+    (load || loadListings)().catch(e => flash(e.message));
   });
   document.querySelectorAll(".tabs button").forEach(b =>
     b.addEventListener("click", () => switchView(b.dataset.tab)));

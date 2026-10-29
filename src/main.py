@@ -35,6 +35,7 @@ from src.ebay.client import EbayClient
 from src.ebay.models import EbayParseError, parse_item_detail
 from src.ebay.quota import QuotaLedger
 from src.ebay.taxonomy import TaxonomyService
+from src.gui.scanner_actions import ScanRunner
 from src.gui.server import DashboardOptions, GuiServer
 from src.gui.watchdog import Watchdog
 from src.monitoring.digest import build_digest, digest_due
@@ -938,8 +939,10 @@ def _gui_watchdog(config: AppConfig, *, max_age_seconds: int) -> Watchdog | None
 def cmd_gui(config: AppConfig, args: argparse.Namespace) -> int:
     """Serve the local web dashboard over the scanner's database.
 
-    Deliberately does not require eBay or Telegram credentials: it only
-    reads the SQLite file and records manual review decisions.
+    Deliberately does not build the eBay client at startup: it reads the
+    SQLite file and records manual review decisions. Manual scans requested
+    from the dashboard build their own runtime lazily, on first use, and
+    surface any credential problem in the scan status.
     """
     if not config.settings.database_path.exists():
         raise ConfigError(
@@ -950,6 +953,9 @@ def cmd_gui(config: AppConfig, args: argparse.Namespace) -> int:
     try:
         max_age = _env_clamped_int("HEALTH_MAX_AGE_SECONDS", 900, lo=30, hi=86400)
         watchdog = _gui_watchdog(config, max_age_seconds=max_age)
+        # Manual scans are built lazily on first use: the dashboard must boot
+        # even when eBay credentials are missing, and surface any config
+        # problem in the scan status instead of refusing to serve.
         server = GuiServer(
             DashboardOptions(
                 database_path=config.settings.database_path,
@@ -958,6 +964,7 @@ def cmd_gui(config: AppConfig, args: argparse.Namespace) -> int:
                 daily_budget=config.effective_daily_budget,
             ),
             watchdog=watchdog,
+            scan_runner=ScanRunner(config),
         )
     except Exception:
         log.exception("dashboard setup failed")

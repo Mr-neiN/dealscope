@@ -274,7 +274,7 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 ## Local web dashboard
 
 A minimal, dependency-free dashboard reads the same SQLite database the
-scanner writes:
+scanner writes and can also trigger scans:
 
 ```bash
 # next to the scanner container (GUI_BIND/GUI_PORT control the bridge)
@@ -290,6 +290,29 @@ a filterable/sortable listings table (product, marketplace, condition chips,
 risk, min discount, min savings, max total cost, auctions ending soon),
 pending and delivered alerts, and per-listing manual review decisions (the
 same decisions as `record-decision`) for feedback-driven tuning.
+
+### Scanning from the dashboard
+
+The Scanner tab does not only read — it can trigger eBay searches:
+
+- **Run scan now:** pick a strategy (new listings, auctions ending soon,
+  variant/misspelling searches, bundles, broad discovery) or a single product
+  across all strategies, and choose how many search profiles to run (1–25).
+- **Test Telegram:** sends a test message so delivery problems surface
+  without waiting for a real deal.
+- **Result feedback:** per-profile outcomes (items, new, duration, errors) and
+  the combined search history of the scheduler and manual scans.
+
+A manual scan is deliberately collision-safe with the always-running
+scheduler: it takes the same persisted job claims (a search the scheduler is
+already running is skipped and marked `busy`, never run twice) and consumes
+the same daily API budget ledger, stopping cleanly before the reserve when
+the day's allowance is exhausted. It does not take the runner lease — the
+schedule loop keeps its digests, sweeps and heartbeats — and it respects
+shadow mode: candidates are recorded, not sent, exactly as scheduled scans.
+
+Credentials stay inside the server process. All scan capabilities use the
+container's own environment; the browser only talks to the local dashboard.
 
 ### Daily digest and scanner watchdog
 
@@ -314,7 +337,8 @@ Security notes:
   the local SQLite file.
 - The compose file binds it to host loopback (`GUI_BIND=127.0.0.1`) by
   default. Only set `GUI_BIND=0.0.0.0` on a trusted LAN; the UI has no
-  authentication. eBay/Telegram credentials are never exposed through it.
+  authentication. eBay/Telegram credentials stay in the server process
+  environment and are never exposed to the browser.
 - It runs as a separate container sharing `./data`, so the scanner's memory
   and CPU limits are unaffected.
 
