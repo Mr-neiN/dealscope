@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -485,12 +486,22 @@ def make_handler(store: DashboardStore) -> type[GuiHandler]:
 
 
 class GuiServer:
-    def __init__(self, options: DashboardOptions) -> None:
+    def __init__(self, options: DashboardOptions, *, watchdog: Any = None) -> None:
         self.options = options
         self.store = DashboardStore(options)
+        self.watchdog = watchdog
 
     def serve_forever(self, host: str, port: int) -> None:
         httpd = ThreadingHTTPServer((host, port), make_handler(self.store))
+        thread = None
+        if self.watchdog is not None:
+            self.watchdog.stop.clear()
+            thread = threading.Thread(
+                target=self.watchdog.run_forever,
+                name="heartbeat-watchdog",
+                daemon=True,
+            )
+            thread.start()
         log.info(
             "dashboard listening on http://%s:%s (database: %s)",
             host,
@@ -500,4 +511,7 @@ class GuiServer:
         try:
             httpd.serve_forever()
         finally:
+            if thread is not None:
+                self.watchdog.stop.set()
+                thread.join(timeout=5)
             httpd.server_close()

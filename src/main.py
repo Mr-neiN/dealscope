@@ -17,7 +17,7 @@ from typing import Any, Sequence
 import httpx
 
 from src.alerts.service import AlertService
-from src.alerts.telegram import TelegramNotifier
+from src.alerts.telegram import TelegramNotifier, TelegramPermanentError
 from src.config import (
     CONDITION_CLASSES,
     DECISIONS,
@@ -34,6 +34,8 @@ from src.ebay.models import EbayParseError, parse_item_detail
 from src.ebay.quota import QuotaLedger
 from src.ebay.taxonomy import TaxonomyService
 from src.gui.server import DashboardOptions, GuiServer
+from src.gui.watchdog import Watchdog
+from src.monitoring.digest import build_digest, digest_due
 from src.monitoring.logging_setup import configure_logging
 from src.monitoring.metrics import generate_report, render_report
 from src.money import MoneyError, parse_eur_minor
@@ -227,6 +229,16 @@ def cmd_run(config: AppConfig, args: argparse.Namespace) -> int:
         last_prune_day: str | None = None
         last_stats = None
         last_delivery = None
+        last_digest_day: date | None = None
+        last_digest_attempt: datetime | None = None
+        digest_enabled = _true_flag("DIGEST_ENABLED")
+        digest_hour = _env_clamped_int("DIGEST_HOUR", 9, lo=0, hi=23)
+        digest_top = _env_clamped_int("DIGEST_TOP", 5, lo=1, hi=20)
+        if digest_enabled and not config.settings.telegram_configured:
+            log.info(
+                "daily digest enabled but Telegram is not configured; skipping",
+                extra={"event": "digest_skipped"},
+            )
 
         while not stop.is_set():
             now = utc_now()
@@ -282,6 +294,32 @@ def cmd_run(config: AppConfig, args: argparse.Namespace) -> int:
                 except Exception:
                     log.exception("database backup failed", extra={"event": "backup_error"})
                 last_backup_day = today
+
+            digest_day = digest_due(
+                now, last_digest_day, digest_hour, config.settings.timezone
+            ) if digest_enabled and config.settings.telegram_configured else None
+            if digest_day is not None and (
+                last_digest_attempt is None
+                or (now - last_digest_attempt).total_seconds() >= 600
+            ):
+                try:
+                    runtime.notifier.send(
+                        build_digest(runtime.repository, config, now, top=digest_top)
+                    )
+                    last_digest_day = digest_day
+                    log.info("daily digest sent", extra={"event": "digest_sent"})
+                except TelegramPermanentError as exc:
+                    # A bad token/chat will keep failing; do not retry today.
+                    last_digest_day = digest_day
+                    log.warning(
+                        "daily digest permanently failed: %s",
+                        exc,
+                        extra={"event": "digest_error"},
+                    )
+                except Exception:
+                    log.exception("daily digest failed", extra={"event": "digest_error"})
+                finally:
+                    last_digest_attempt = now
 
             _write_heartbeat(
                 heartbeat_path,
@@ -781,6 +819,18 @@ def cmd_record_decision(config: AppConfig, args: argparse.Namespace) -> int:
         runtime.close()
 
 
+def _true_flag(name: str, default: str = "true") -> bool:
+    return str(os.environ.get(name, default)).strip().lower() not in {"0", "false", "no"}
+
+
+def _env_clamped_int(name: str, default: int, *, lo: int, hi: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return max(lo, min(hi, value))
+
+
 def cmd_notify_test(config: AppConfig, args: argparse.Namespace) -> int:
     if not config.settings.telegram_configured:
         raise ConfigError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required")
@@ -802,6 +852,34 @@ def cmd_health(config: AppConfig | None = None, args: argparse.Namespace | None 
     return health_main()
 
 
+def _gui_watchdog(config: AppConfig, *, max_age_seconds: int) -> Watchdog | None:
+    """Heartbeat watchdog for the dashboard process, unless disabled.
+
+    The dashboard container outlives scanner crashes, so it is the right
+    place to notice that the scanner has gone quiet. Without Telegram the
+    watchdog still runs and logs, so the dashboard log shows liveness.
+    """
+    if not _true_flag("WATCHDOG_ENABLED"):
+        return None
+    notifier: TelegramNotifier | None = None
+    if config.settings.telegram_configured:
+        notifier = TelegramNotifier(
+            config.settings.telegram_bot_token,
+            config.settings.telegram_chat_id,
+        )
+    else:
+        print(
+            "watchdog: Telegram is not configured; "
+            "scanner-stall warnings will only appear in dashboard logs"
+        )
+    notify = (lambda text: notifier.send(text)) if notifier is not None else None
+    return Watchdog(
+        _heartbeat_path(config),
+        max_age_seconds=max_age_seconds,
+        notify=notify,
+    )
+
+
 def cmd_gui(config: AppConfig, args: argparse.Namespace) -> int:
     """Serve the local web dashboard over the scanner's database.
 
@@ -814,14 +892,21 @@ def cmd_gui(config: AppConfig, args: argparse.Namespace) -> int:
             f"{config.settings.database_path}; run the scanner first "
             "(docker compose up ebay-scanner) so there is data to browse"
         )
-    server = GuiServer(
-        DashboardOptions(
-            database_path=config.settings.database_path,
-            shadow_mode=config.settings.shadow_mode,
-            heartbeat_path=_heartbeat_path(config),
-            daily_budget=config.effective_daily_budget,
+    try:
+        max_age = _env_clamped_int("HEALTH_MAX_AGE_SECONDS", 900, lo=30, hi=86400)
+        watchdog = _gui_watchdog(config, max_age_seconds=max_age)
+        server = GuiServer(
+            DashboardOptions(
+                database_path=config.settings.database_path,
+                shadow_mode=config.settings.shadow_mode,
+                heartbeat_path=_heartbeat_path(config),
+                daily_budget=config.effective_daily_budget,
+            ),
+            watchdog=watchdog,
         )
-    )
+    except Exception:
+        log.exception("dashboard setup failed")
+        raise
     print(
         f"dashboard: http://{args.host}:{args.port} "
         f"(database: {config.settings.database_path})"

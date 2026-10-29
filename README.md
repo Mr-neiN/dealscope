@@ -220,7 +220,9 @@ discovery, risk, valuation, alerts and metrics are stored.
 - SQLite/data is the only writable bind mount. Telegram is outbound only, so no
   ports or reverse proxy are needed.
 - Health check: database readable, schema present, scheduler heartbeat fresh
-  (`HEALTH_MAX_AGE_SECONDS`, default 900).
+  (`HEALTH_MAX_AGE_SECONDS`, default 900). The GUI container reports the
+  same check on the shared heartbeat, failing `docker ps` health quickly
+  when the scanner hangs.
 - Graceful shutdown on SIGTERM/SIGINT with a 30-second stop grace period.
 
 If the container cannot write `./data` on Linux, fix ownership:
@@ -260,10 +262,27 @@ python -m src.main gui --host 127.0.0.1 --port 8080
 ```
 
 It shows live stats (listings, alerts, daily API budget, scheduler heartbeat),
-a filterable/sortable listings table (product, marketplace, condition, risk,
-min discount, min savings, max total cost, auctions ending soon), pending and
-delivered alerts, and per-listing manual review decisions (the same decisions
-as `record-decision`) for feedback-driven tuning.
+a filterable/sortable listings table (product, marketplace, condition chips,
+risk, min discount, min savings, max total cost, auctions ending soon),
+pending and delivered alerts, and per-listing manual review decisions (the
+same decisions as `record-decision`) for feedback-driven tuning.
+
+### Daily digest and scanner watchdog
+
+Two safety nets around the per-listing alerts:
+
+- **Daily digest (scanner):** once per day at `DIGEST_HOUR` local time
+  (default 09:00 Europe/Rome), one compact Telegram message with the top
+  `DIGEST_TOP` candidates of the last 24h, alert delivery health and review
+  precision. It runs during shadow mode too (clearly labeled), so the
+  calibration feedback loop does not require opening the dashboard.
+  Disable with `DIGEST_ENABLED=false`.
+- **Heartbeat watchdog (dashboard container):** the GUI container shares the
+  scanner's heartbeat file and outlives scanner crashes. If the heartbeat
+  goes stale (hung loop or dead container), it sends one Telegram warning,
+  repeats it every ~4 hours while the scanner stays down and reports when
+  scanning resumes. Without Telegram configured it logs instead. Disable
+  with `WATCHDOG_ENABLED=false`.
 
 Security notes:
 

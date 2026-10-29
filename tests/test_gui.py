@@ -253,6 +253,57 @@ def test_unknown_route_404(server):
     assert httpx.get(f"{server}/api/nope", timeout=5).status_code == 404
 
 
+def test_gui_server_starts_and_stops_watchdog(seeded_db, monkeypatch):
+    """The GUI boots with a watchdog wired in, and stops it cleanly."""
+    import src.gui.server as server_module
+    from src.gui.server import GuiServer
+
+    class StubWatchdog:
+        def __init__(self) -> None:
+            self.stop = threading.Event()
+            self.started = threading.Event()
+
+        def run_forever(self) -> None:
+            self.started.set()
+            self.stop.wait(timeout=10)
+
+    module_stop = threading.Event()
+
+    class FakeServer:
+        def __init__(self, addr: tuple[str, int], handler: object) -> None:
+            self.addr = addr
+
+        def serve_forever(self) -> None:
+            module_stop.wait(timeout=10)  # blocks like the real one
+
+        def server_close(self) -> None:
+            pass
+
+    monkeypatch.setattr(server_module, "ThreadingHTTPServer", FakeServer)
+
+    dog = StubWatchdog()
+    gui = GuiServer(
+        DashboardOptions(database_path=seeded_db, shadow_mode=False,
+                         heartbeat_path=None, daily_budget=None),
+        watchdog=dog,
+    )
+    httpd_thread = threading.Thread(
+        target=gui.serve_forever, args=("127.0.0.1", 0), daemon=True
+    )
+    httpd_thread.start()
+    try:
+        # the watchdog thread must already be running before we release the
+        # fake server; GuiServer.serve_forever's finally-block then stops it
+        assert dog.started.wait(timeout=5), "watchdog thread did not start"
+        module_stop.set()
+        httpd_thread.join(timeout=15)
+        assert not httpd_thread.is_alive(), "serve_forever did not return"
+        assert dog.stop.is_set(), "watchdog was not stopped with the server"
+    finally:
+        dog.stop.set()
+        module_stop.set()
+
+
 def test_store_decision_validation(seeded_db):
     store = DashboardStore(
         DashboardOptions(database_path=seeded_db, shadow_mode=False)
