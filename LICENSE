@@ -1,0 +1,64 @@
+# DealScope — Personal Use License
+
+Copyright (c) 2026 the DealScope author
+
+This software (the "Software") is made available free of charge for
+**personal, non-commercial use only**, under the following terms.
+
+## 1. What you may do
+
+You may, without charge and without asking permission:
+
+- **Run** the Software yourself, on machines you own or control (including your
+  own homelab), for your own personal deal-scanning purposes;
+- **Study** the source code and modify it for your own private use;
+- **Link** to this repository and tell others about it;
+- **Keep** the Software private: run it for yourself, on systems you control
+
+## 2. What you may NOT do
+
+Except with prior **written permission** from the author, you may not:
+
+1. **Sell, rent, license, sublicense, resell or otherwise commercialize** the
+   Software, or charge for access to it, in whole or in part;
+2. **Distribute, publish or redistribute** the Software or any modified,
+   translated or derivative version of it, whether free or paid — sharing the
+   link to this repository is the supported way to give it to someone;
+3. **Use the Software, or derivatives of it, as the basis of a commercial
+   product or paid service**, including hosted or multi-tenant offerings;
+4. **Remove or obscure** this license notice, the copyright notice, or the
+   attribution to the original author from the source or from user-facing
+   interfaces;
+5. **Present the Software as affiliated with, endorsed by, or sponsored by
+   eBay** — the Software is an independent tool and eBay is a trademark of its
+   respective owner.
+
+## 3. The commercial edition
+
+A commercially licensed edition (**DealScope Pro**) with additional features,
+packaging and support is available separately from the author. If anything in
+§2 blocks your use case (embedding, redistribution, a paid deployment), ask
+about the commercial license instead of working around this document.
+
+## 4. Warranty and liability
+
+The Software is provided "as is", **without warranty of any kind**, express or
+implied, including but not limited to the warranties of merchantability,
+fitness for a particular purpose and non-infringement. In no event shall the
+author be liable for any claim, damages or other liability arising from,
+out of or in connection with the Software or its use — including, without
+limitation, any purchase or decision made on the basis of the alerts,
+valuations or rankings the Software produces. Purchases and bids made through
+marketplaces remain entirely the operator's own decision and responsibility.
+
+## 5. Termination
+
+Your rights under this license end automatically if you breach any of the
+terms above. Sections 3 and 4 survive termination. The author may also grant
+additional rights by written agreement.
+
+## 6. Governing interpretation
+
+This license is intentionally restrictive. If a use is not explicitly granted
+in §1 and not obviously covered by "personal non-commercial use", assume it is
+**not** permitted and ask the author.

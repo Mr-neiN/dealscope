@@ -341,6 +341,23 @@ Security notes:
   intentionally out of scope for the first version. The local dashboard is
   read-only over the same database and does not change this.
 
+## License
+
+This edition is free for **personal, non-commercial use only** — the full terms
+are in [LICENSE](LICENSE), the short version:
+
+- ✅ Run it yourself in your own homelab, study and modify it for your own
+  private use.
+- ❌ Don't sell it, redistribute it (share the repo link instead), or use it
+  or its derivatives as the basis for a commercial product or paid service.
+
+It is an independent tool and is not affiliated with, endorsed by or sponsored
+by eBay; eBay is a trademark of its respective owner.
+
+Need commercial terms (embedding, redistribution, a hosted or supported
+deployment)? Ask the author about the separately licensed
+**DealScope Pro** edition instead of working around the license.
+
 ## Layout
 
 ```text
